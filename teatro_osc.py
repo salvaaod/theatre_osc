@@ -120,6 +120,7 @@ class TheatreApp:
         )
         self.card_frames = {}
         self.card_name_labels = {}
+        self.card_font_size = 12
         self.last_excel_path = None
 
         self.build_ui()
@@ -187,8 +188,6 @@ class TheatreApp:
         self.grid_frame.bind("<Configure>", self.on_grid_frame_configure)
         self.grid_canvas.bind("<Configure>", self.on_grid_canvas_configure)
 
-        self.mic_labels = {}
-
         self.root.bind("<Left>", lambda e: self.previous_scene())
         self.root.bind("<Right>", lambda e: self.next_scene())
         self.root.bind("<space>", lambda e: self.apply_scene())
@@ -245,7 +244,6 @@ class TheatreApp:
         for widget in self.grid_frame.winfo_children():
             widget.destroy()
 
-        self.mic_labels.clear()
         self.card_frames.clear()
         self.card_name_labels.clear()
 
@@ -256,15 +254,16 @@ class TheatreApp:
             frame = tk.Frame(self.grid_frame, bg="#111111", bd=2, relief="ridge")
             frame.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
 
-            name = tk.Label(frame, text=actor, fg="white", bg="#111111",
-                            font=("Helvetica", 16, "bold"))
-            name.pack(pady=5)
+            name = tk.Label(
+                frame,
+                text=actor,
+                fg="white",
+                bg="#990000",
+                font=("Helvetica", self.card_font_size, "bold"),
+                justify="center"
+            )
+            name.pack(fill="both", expand=True, padx=4, pady=4)
 
-            state = tk.Label(frame, text="OFF", bg="red",
-                             font=("Helvetica", 18, "bold"), width=8)
-            state.pack(pady=5)
-
-            self.mic_labels[actor] = state
             self.card_frames[actor] = frame
             self.card_name_labels[actor] = name
 
@@ -327,14 +326,19 @@ class TheatreApp:
 
         available_width = max(self.grid_canvas.winfo_width() - 20, 1)
         count = len(self.actors)
-        per_card = max(90, min(220, (available_width // count) - 20))
-        name_font_size = 12 if per_card < 120 else 14 if per_card < 160 else 16
+        horizontal_padding_per_card = 20
+        usable_width = max(available_width - (count * horizontal_padding_per_card), count)
+        per_card = max(70, usable_width // count)
+        self.card_font_size = 9 if per_card < 90 else 10 if per_card < 120 else 11
 
         for actor in self.actors:
             frame = self.card_frames[actor]
-            frame.configure(width=per_card)
+            frame.configure(width=per_card, height=per_card)
             frame.grid_propagate(False)
-            self.card_name_labels[actor].configure(font=("Helvetica", name_font_size, "bold"), wraplength=per_card - 16)
+            self.card_name_labels[actor].configure(
+                font=("Helvetica", self.card_font_size, "bold"),
+                wraplength=max(per_card - 12, 40)
+            )
 
     def on_close(self):
         self.save_settings()
@@ -364,11 +368,14 @@ class TheatreApp:
         self.scene_label.config(text=f"Scene: {scene}")
 
         for actor, enabled in self.scenes[scene].items():
-            label = self.mic_labels[actor]
+            frame = self.card_frames[actor]
+            label = self.card_name_labels[actor]
             if enabled:
-                label.config(text="ON", bg="green")
+                frame.config(bg="#008000")
+                label.config(bg="#008000")
             else:
-                label.config(text="OFF", bg="red")
+                frame.config(bg="#990000")
+                label.config(bg="#990000")
 
     # ==============================
     # Apply Scene (Send OSC)
