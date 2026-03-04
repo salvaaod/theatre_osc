@@ -2,10 +2,9 @@
 
 import os
 import json
-import time
 import logging
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import filedialog, messagebox
 
 import pandas as pd
 from pythonosc.udp_client import SimpleUDPClient
@@ -120,7 +119,9 @@ class TheatreApp:
         )
         self.card_frames = {}
         self.card_name_labels = {}
-        self.card_font_size = 12
+        self.base_card_font_size = 10
+        self.font_size_adjust = 0
+        self.card_font_size = 10
         self.card_size = 90
         self.last_size_signature = None
         self.last_excel_path = None
@@ -167,18 +168,11 @@ class TheatreApp:
         tk.Button(controls, text="Previous", command=self.previous_scene).pack(side="left", padx=5)
         tk.Button(controls, text="Next", command=self.next_scene).pack(side="left", padx=5)
         tk.Button(controls, text="GO", command=self.apply_scene, width=10).pack(side="left", padx=10)
+        tk.Button(controls, text="A-", command=self.decrease_font_size, width=4).pack(side="left", padx=(20, 5))
+        tk.Button(controls, text="A+", command=self.increase_font_size, width=4).pack(side="left", padx=5)
 
         self.grid_canvas = tk.Canvas(self.root, bg="black", highlightthickness=0)
-        self.grid_canvas.pack(fill="both", expand=True, padx=20, pady=(20, 0))
-
-        self.grid_scrollbar = tk.Scrollbar(
-            self.root,
-            orient="horizontal",
-            command=self.grid_canvas.xview
-        )
-        self.grid_scrollbar.pack(fill="x", padx=20, pady=(0, 20))
-
-        self.grid_canvas.configure(xscrollcommand=self.grid_scrollbar.set)
+        self.grid_canvas.pack(fill="both", expand=True, padx=20, pady=(20, 20))
 
         self.grid_frame = tk.Frame(self.grid_canvas, bg="black")
         self.grid_canvas_window = self.grid_canvas.create_window(
@@ -327,7 +321,13 @@ class TheatreApp:
             return
         self.load_excel_from_path(self.last_excel_path, show_error_dialog=False)
 
-    def update_card_sizes(self):
+    def truncate_actor_name(self, actor):
+        max_chars = max(3, (self.card_size - 12) // max(self.card_font_size - 2, 1))
+        if len(actor) <= max_chars:
+            return actor
+        return f"{actor[:max_chars - 1]}…"
+
+    def update_card_sizes(self, force=False):
         if not self.actors:
             return
 
@@ -335,13 +335,15 @@ class TheatreApp:
         available_width = max(self.grid_canvas.winfo_width() - 20, 1)
         total_padding = count * 20
         per_card = max(70, (available_width - total_padding) // count)
-        font_size = 9 if per_card < 90 else 10 if per_card < 120 else 11
+        base_font = 9 if per_card < 90 else 10 if per_card < 120 else 11
+        font_size = max(8, base_font + self.font_size_adjust)
 
         size_signature = (count, available_width, per_card, font_size)
-        if self.last_size_signature == size_signature:
+        if not force and self.last_size_signature == size_signature:
             return
 
         self.card_size = per_card
+        self.base_card_font_size = base_font
         self.card_font_size = font_size
         self.last_size_signature = size_signature
 
@@ -351,8 +353,18 @@ class TheatreApp:
             frame.grid_propagate(False)
             self.card_name_labels[actor].configure(
                 font=("Helvetica", self.card_font_size, "bold"),
-                wraplength=max(self.card_size - 12, 40)
+                text=self.truncate_actor_name(actor)
             )
+
+    def increase_font_size(self):
+        self.font_size_adjust = min(self.font_size_adjust + 1, 8)
+        self.last_size_signature = None
+        self.update_card_sizes(force=True)
+
+    def decrease_font_size(self):
+        self.font_size_adjust = max(self.font_size_adjust - 1, -6)
+        self.last_size_signature = None
+        self.update_card_sizes(force=True)
 
     def on_close(self):
         self.save_settings()
