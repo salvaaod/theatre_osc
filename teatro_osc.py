@@ -124,6 +124,7 @@ class TheatreApp:
         self.card_font_size = 10
         self.card_size = 90
         self.last_size_signature = None
+        self.last_window_size = (0, 0)
         self.last_excel_path = None
 
         self.build_ui()
@@ -188,6 +189,7 @@ class TheatreApp:
         self.root.bind("<Right>", lambda e: self.next_scene())
         self.root.bind("<space>", lambda e: self.apply_scene())
         self.root.bind("<Return>", lambda e: self.apply_scene())
+        self.root.bind("<Configure>", self.on_root_configure)
 
     # ==============================
     # Excel Loading
@@ -278,7 +280,14 @@ class TheatreApp:
             width=self.grid_canvas.winfo_width(),
             height=self.grid_canvas.winfo_height()
         )
-        self.update_card_sizes()
+
+    def on_root_configure(self, _event):
+        window_size = (self.root.winfo_width(), self.root.winfo_height())
+        if window_size == self.last_window_size:
+            return
+
+        self.last_window_size = window_size
+        self.update_card_sizes(force=True)
 
     def load_settings(self):
         if not os.path.exists(self.settings_path):
@@ -321,11 +330,38 @@ class TheatreApp:
             return
         self.load_excel_from_path(self.last_excel_path, show_error_dialog=False)
 
-    def truncate_actor_name(self, actor):
-        max_chars = max(3, (self.card_size - 12) // max(self.card_font_size - 2, 1))
-        if len(actor) <= max_chars:
+    def format_actor_name(self, actor):
+        actor = str(actor).strip()
+        if not actor:
+            return ""
+
+        chars_per_line = max(4, (self.card_size - 16) // max(self.card_font_size - 2, 1))
+        if len(actor) <= chars_per_line:
             return actor
-        return f"{actor[:max_chars - 1]}…"
+
+        words = actor.split()
+        if len(words) > 1:
+            target = len(actor) // 2
+            best_split = None
+
+            for idx in range(1, len(words)):
+                left = " ".join(words[:idx])
+                right = " ".join(words[idx:])
+                score = abs(len(left) - target)
+                if best_split is None or score < best_split[0]:
+                    best_split = (score, left, right)
+
+            if best_split:
+                _, line1, line2 = best_split
+                if len(line1) <= chars_per_line and len(line2) <= chars_per_line:
+                    return f"{line1}\n{line2}"
+
+        split_at = min(chars_per_line, max(1, len(actor) // 2))
+        line1 = actor[:split_at].rstrip()
+        line2 = actor[split_at:].lstrip()
+        if len(line2) > chars_per_line:
+            line2 = f"{line2[:chars_per_line - 1]}…"
+        return f"{line1}\n{line2}"
 
     def update_card_sizes(self, force=False):
         if not self.actors:
@@ -334,7 +370,16 @@ class TheatreApp:
         count = len(self.actors)
         available_width = max(self.grid_canvas.winfo_width() - 20, 1)
         total_padding = count * 20
-        per_card = max(70, (available_width - total_padding) // count)
+        per_card_from_width = max(70, (available_width - total_padding) // count)
+        per_card = per_card_from_width
+        base_font = 9 if per_card < 90 else 10 if per_card < 120 else 11
+        font_size = max(8, base_font + self.font_size_adjust)
+
+        longest_name_len = max((len(str(actor).strip()) for actor in self.actors), default=1)
+        min_for_two_lines = int(((longest_name_len / 2.0) * max(font_size - 2, 1)) + 20)
+        min_for_height = int((font_size * 2.8) + 16)
+        per_card = max(per_card_from_width, min_for_two_lines, min_for_height)
+
         base_font = 9 if per_card < 90 else 10 if per_card < 120 else 11
         font_size = max(8, base_font + self.font_size_adjust)
 
@@ -353,7 +398,8 @@ class TheatreApp:
             frame.grid_propagate(False)
             self.card_name_labels[actor].configure(
                 font=("Helvetica", self.card_font_size, "bold"),
-                text=self.truncate_actor_name(actor)
+                text=self.format_actor_name(actor),
+                justify="center"
             )
 
     def increase_font_size(self):
