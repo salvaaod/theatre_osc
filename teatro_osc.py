@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
-import os
 import json
 import logging
+import os
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
@@ -15,7 +15,7 @@ from pythonosc.udp_client import SimpleUDPClient
 # ==============================
 
 DEFAULT_OSC_IP = "192.168.10.59"   # Change to your X32 IP
-DEFAULT_OSC_PORT = 10023         # X32 default OSC port
+DEFAULT_OSC_PORT = 10023            # X32 default OSC port
 
 DEFAULT_ADDRESS_TEMPLATE = "/ch/{ch:02d}/mix/on"
 
@@ -69,6 +69,46 @@ def build_channel_map(actors):
     return {actor: i + 1 for i, actor in enumerate(actors)}
 
 
+def find_startup_excel(script_dir, remembered_path):
+    candidates = []
+
+    if remembered_path:
+        remembered_path = remembered_path.strip()
+        if remembered_path:
+            candidates.append(remembered_path)
+            if not os.path.isabs(remembered_path):
+                candidates.append(os.path.join(script_dir, remembered_path))
+
+    for base_dir in [script_dir, os.getcwd()]:
+        if not os.path.isdir(base_dir):
+            continue
+        for file_name in os.listdir(base_dir):
+            lower_name = file_name.lower()
+            if lower_name.endswith(".xlsx") or lower_name.endswith(".xls"):
+                candidates.append(os.path.join(base_dir, file_name))
+
+    existing = []
+    seen = set()
+    for candidate in candidates:
+        normalized = os.path.abspath(candidate)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        if os.path.isfile(normalized):
+            existing.append(normalized)
+
+    if not existing:
+        return None
+
+    if remembered_path:
+        remembered_abs = os.path.abspath(remembered_path)
+        if remembered_abs in existing:
+            return remembered_abs
+
+    existing.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    return existing[0]
+
+
 # ==============================
 # OSC Sender
 # ==============================
@@ -119,15 +159,16 @@ class TheatreApp:
         )
         self.card_frames = {}
         self.card_name_labels = {}
-        self.card_font_size = 10
+
+        self.card_font_size = 12
         self.card_width = 140
         self.card_height = 90
-        self.last_window_size = (0, 0)
+
         self.last_excel_path = None
 
         self.build_ui()
         self.load_settings()
-        self.try_load_last_excel()
+        self.try_load_startup_excel()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     # ==============================
@@ -168,6 +209,7 @@ class TheatreApp:
         tk.Button(controls, text="Previous", command=self.previous_scene).pack(side="left", padx=5)
         tk.Button(controls, text="Next", command=self.next_scene).pack(side="left", padx=5)
         tk.Button(controls, text="GO", command=self.apply_scene, width=10).pack(side="left", padx=10)
+
         tk.Button(controls, text="H-", command=self.decrease_card_width, width=4).pack(side="left", padx=(20, 5))
         tk.Button(controls, text="H+", command=self.increase_card_width, width=4).pack(side="left", padx=5)
         tk.Button(controls, text="V-", command=self.decrease_card_height, width=4).pack(side="left", padx=(10, 5))
@@ -175,15 +217,28 @@ class TheatreApp:
         tk.Button(controls, text="A-", command=self.decrease_font_size, width=4).pack(side="left", padx=(10, 5))
         tk.Button(controls, text="A+", command=self.increase_font_size, width=4).pack(side="left", padx=5)
 
-        self.grid_canvas = tk.Canvas(self.root, bg="black", highlightthickness=0)
-        self.grid_canvas.pack(fill="both", expand=True, padx=20, pady=(20, 20))
+        self.status_label = tk.Label(
+            self.root,
+            text="No Excel loaded",
+            font=("Helvetica", 10),
+            fg="#bbbbbb",
+            bg="black",
+            anchor="w"
+        )
+        self.status_label.pack(fill="x", padx=20, pady=(6, 0))
+
+        grid_container = tk.Frame(self.root, bg="black")
+        grid_container.pack(fill="both", expand=True, padx=20, pady=(20, 20))
+
+        self.grid_canvas = tk.Canvas(grid_container, bg="black", highlightthickness=0)
+        self.grid_canvas.pack(side="top", fill="both", expand=True)
+
+        self.x_scrollbar = tk.Scrollbar(grid_container, orient="horizontal", command=self.grid_canvas.xview)
+        self.x_scrollbar.pack(side="bottom", fill="x")
+        self.grid_canvas.configure(xscrollcommand=self.x_scrollbar.set)
 
         self.grid_frame = tk.Frame(self.grid_canvas, bg="black")
-        self.grid_canvas_window = self.grid_canvas.create_window(
-            (0, 0),
-            window=self.grid_frame,
-            anchor="nw"
-        )
+        self.grid_canvas_window = self.grid_canvas.create_window((0, 0), window=self.grid_frame, anchor="nw")
 
         self.grid_frame.bind("<Configure>", self.on_grid_frame_configure)
 
@@ -191,7 +246,6 @@ class TheatreApp:
         self.root.bind("<Right>", lambda e: self.next_scene())
         self.root.bind("<space>", lambda e: self.apply_scene())
         self.root.bind("<Return>", lambda e: self.apply_scene())
-        self.root.bind("<Configure>", self.on_root_configure)
 
     # ==============================
     # Excel Loading
@@ -213,11 +267,16 @@ class TheatreApp:
         try:
             self.df = load_excel_file(path)
             self.scenes = dataframe_to_scene_dict(self.df)
+
+            if self.df.empty or len(self.df.columns) == 0:
+                raise ValueError("Excel file has no scenes/actors to load")
+
         except Exception as e:
+            error_message = f"Could not load Excel file: {path}\n{e}"
+            self.status_label.config(text=error_message)
+            logging.warning(error_message)
             if show_error_dialog:
                 messagebox.showerror("Error", str(e))
-            else:
-                logging.warning("Could not load Excel file (%s): %s", path, e)
             return False
 
         self.scene_names = list(self.scenes.keys())
@@ -226,14 +285,27 @@ class TheatreApp:
 
         self.current_scene_index = 0
         self.last_live_state = None
-        self.last_excel_path = path
+        self.last_excel_path = os.path.abspath(path)
 
         self.build_grid()
         self.render_scene()
         self.save_settings()
 
-        logging.info("Loaded Excel: %s", os.path.basename(path))
+        loaded_message = f"Loaded Excel: {os.path.basename(path)}"
+        self.status_label.config(text=loaded_message)
+        logging.info("%s", loaded_message)
         return True
+
+    def try_load_startup_excel(self):
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        path = find_startup_excel(script_dir, self.last_excel_path)
+        if not path:
+            self.status_label.config(text="No startup Excel found")
+            return
+
+        loaded = self.load_excel_from_path(path, show_error_dialog=False)
+        if not loaded:
+            self.status_label.config(text=f"Startup Excel failed: {os.path.basename(path)}")
 
     # ==============================
     # Grid
@@ -248,15 +320,12 @@ class TheatreApp:
         self.card_name_labels.clear()
 
         for i, actor in enumerate(self.actors):
-            row = 0
-            col = i
-
             frame = tk.Frame(self.grid_frame, bg="#111111", bd=2, relief="ridge")
-            frame.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
+            frame.grid(row=0, column=i, padx=10, pady=10)
 
             name = tk.Label(
                 frame,
-                text=actor,
+                text=self.format_actor_name(actor),
                 fg="white",
                 bg="#990000",
                 font=("Helvetica", self.card_font_size, "bold"),
@@ -267,142 +336,76 @@ class TheatreApp:
             self.card_frames[actor] = frame
             self.card_name_labels[actor] = name
 
-        self.grid_canvas.update_idletasks()
-        self.sync_canvas_window()
         self.update_card_sizes()
-
-        self.grid_canvas.update_idletasks()
-        self.grid_canvas.configure(scrollregion=self.grid_canvas.bbox("all"))
 
     def on_grid_frame_configure(self, _event):
         self.grid_canvas.configure(scrollregion=self.grid_canvas.bbox("all"))
-
-    def sync_canvas_window(self):
-        self.grid_canvas.itemconfig(
-            self.grid_canvas_window,
-            width=self.grid_canvas.winfo_width(),
-            height=self.grid_canvas.winfo_height()
-        )
-
-    def on_root_configure(self, event):
-        if event.widget is not self.root:
-            return
-
-        window_size = (event.width, event.height)
-        if window_size == self.last_window_size:
-            return
-
-        self.last_window_size = window_size
-        self.sync_canvas_window()
-
-    def load_settings(self):
-        if not os.path.exists(self.settings_path):
-            return
-
-        try:
-            with open(self.settings_path, "r", encoding="utf-8") as settings_file:
-                settings = json.load(settings_file)
-
-            width = int(settings.get("width", 1100))
-            height = int(settings.get("height", 800))
-            x = int(settings.get("x", 100))
-            y = int(settings.get("y", 100))
-            self.card_width = int(settings.get("card_width", 140))
-            self.card_height = int(settings.get("card_height", 90))
-            self.card_font_size = int(settings.get("card_font_size", 10))
-            self.root.geometry(f"{width}x{height}+{x}+{y}")
-            last_excel = settings.get("last_excel_path", "")
-            if isinstance(last_excel, str) and last_excel.strip():
-                self.last_excel_path = last_excel
-        except Exception as e:
-            logging.warning("Could not load app settings: %s", e)
-
-    def save_settings(self):
-        self.root.update_idletasks()
-
-        settings = {
-            "width": self.root.winfo_width(),
-            "height": self.root.winfo_height(),
-            "x": self.root.winfo_x(),
-            "y": self.root.winfo_y(),
-            "card_width": self.card_width,
-            "card_height": self.card_height,
-            "card_font_size": self.card_font_size,
-            "last_excel_path": self.last_excel_path,
-        }
-
-        try:
-            with open(self.settings_path, "w", encoding="utf-8") as settings_file:
-                json.dump(settings, settings_file, indent=2)
-        except Exception as e:
-            logging.warning("Could not save app settings: %s", e)
-
-    def try_load_last_excel(self):
-        if self.last_excel_path and os.path.isfile(self.last_excel_path):
-            self.load_excel_from_path(self.last_excel_path, show_error_dialog=False)
-            return
-
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        excel_candidates = []
-        for file_name in os.listdir(script_dir):
-            lower_name = file_name.lower()
-            if lower_name.endswith(".xlsx") or lower_name.endswith(".xls"):
-                excel_candidates.append(os.path.join(script_dir, file_name))
-
-        if excel_candidates:
-            excel_candidates.sort()
-            self.load_excel_from_path(excel_candidates[0], show_error_dialog=False)
 
     def format_actor_name(self, actor):
         actor = str(actor).strip()
         if not actor:
             return ""
 
-        chars_per_line = max(4, (self.card_width - 16) // max(self.card_font_size - 2, 1))
-        if len(actor) <= chars_per_line:
+        max_chars_per_line = max(4, (self.card_width - 16) // max(self.card_font_size - 2, 1))
+        if len(actor) <= max_chars_per_line:
             return actor
 
         words = actor.split()
         if len(words) > 1:
-            target = len(actor) // 2
-            best_split = None
+            lines = []
+            current = ""
+            for word in words:
+                next_candidate = f"{current} {word}".strip()
+                if len(next_candidate) <= max_chars_per_line:
+                    current = next_candidate
+                else:
+                    if current:
+                        lines.append(current)
+                    current = word
+                if len(lines) == 1:
+                    break
 
-            for idx in range(1, len(words)):
-                left = " ".join(words[:idx])
-                right = " ".join(words[idx:])
-                score = abs(len(left) - target)
-                if best_split is None or score < best_split[0]:
-                    best_split = (score, left, right)
+            remaining_words = words[len(" ".join(lines + ([current] if current else [])).split()):]
+            second_line_base = current if current else ""
+            if remaining_words:
+                second_line_base = f"{second_line_base} {' '.join(remaining_words)}".strip()
 
-            if best_split:
-                _, line1, line2 = best_split
-                if len(line1) <= chars_per_line and len(line2) <= chars_per_line:
-                    return f"{line1}\n{line2}"
+            if lines:
+                line1 = lines[0]
+                line2 = second_line_base
+                if len(line2) > max_chars_per_line:
+                    line2 = f"{line2[:max_chars_per_line - 1]}…"
+                return f"{line1}\n{line2}"
 
-        split_at = min(chars_per_line, max(1, len(actor) // 2))
+        split_at = max_chars_per_line
         line1 = actor[:split_at].rstrip()
         line2 = actor[split_at:].lstrip()
-        if len(line2) > chars_per_line:
-            line2 = f"{line2[:chars_per_line - 1]}…"
+        if len(line2) > max_chars_per_line:
+            line2 = f"{line2[:max_chars_per_line - 1]}…"
         return f"{line1}\n{line2}"
 
     def update_card_sizes(self):
         if not self.actors:
             return
 
-        self.card_width = max(70, self.card_width)
-        self.card_height = max(40, self.card_height)
-        self.card_font_size = max(8, min(48, self.card_font_size))
+        self.card_width = max(40, int(self.card_width))
+        self.card_height = max(30, int(self.card_height))
+        self.card_font_size = max(6, int(self.card_font_size))
 
         for actor in self.actors:
             frame = self.card_frames[actor]
             frame.configure(width=self.card_width, height=self.card_height)
             frame.grid_propagate(False)
-            self.card_name_labels[actor].configure(
+
+            label = self.card_name_labels[actor]
+            label.configure(
                 font=("Helvetica", self.card_font_size, "bold"),
                 text=self.format_actor_name(actor),
                 justify="center"
             )
+
+        self.grid_canvas.update_idletasks()
+        self.grid_canvas.configure(scrollregion=self.grid_canvas.bbox("all"))
 
     def increase_font_size(self):
         self.card_font_size += 1
@@ -433,6 +436,51 @@ class TheatreApp:
         self.card_height -= 10
         self.update_card_sizes()
         self.save_settings()
+
+    def load_settings(self):
+        if not os.path.exists(self.settings_path):
+            return
+
+        try:
+            with open(self.settings_path, "r", encoding="utf-8") as settings_file:
+                settings = json.load(settings_file)
+
+            width = int(settings.get("width", 1100))
+            height = int(settings.get("height", 800))
+            x = int(settings.get("x", 100))
+            y = int(settings.get("y", 100))
+
+            self.card_width = int(settings.get("card_width", self.card_width))
+            self.card_height = int(settings.get("card_height", self.card_height))
+            self.card_font_size = int(settings.get("card_font_size", self.card_font_size))
+
+            self.root.geometry(f"{width}x{height}+{x}+{y}")
+
+            last_excel = settings.get("last_excel_path", "")
+            if isinstance(last_excel, str) and last_excel.strip():
+                self.last_excel_path = last_excel.strip()
+        except Exception as e:
+            logging.warning("Could not load app settings: %s", e)
+
+    def save_settings(self):
+        self.root.update_idletasks()
+
+        settings = {
+            "width": self.root.winfo_width(),
+            "height": self.root.winfo_height(),
+            "x": self.root.winfo_x(),
+            "y": self.root.winfo_y(),
+            "card_width": self.card_width,
+            "card_height": self.card_height,
+            "card_font_size": self.card_font_size,
+            "last_excel_path": self.last_excel_path,
+        }
+
+        try:
+            with open(self.settings_path, "w", encoding="utf-8") as settings_file:
+                json.dump(settings, settings_file, indent=2)
+        except Exception as e:
+            logging.warning("Could not save app settings: %s", e)
 
     def on_close(self):
         self.save_settings()
