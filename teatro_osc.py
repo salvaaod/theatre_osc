@@ -159,7 +159,8 @@ class TheatreApp:
             text="No Scene",
             font=("Helvetica", 24, "bold"),
             fg="white",
-            bg="black"
+            bg="black",
+            width=24
         )
         self.scene_label.pack(pady=10)
 
@@ -183,7 +184,6 @@ class TheatreApp:
         )
 
         self.grid_frame.bind("<Configure>", self.on_grid_frame_configure)
-        self.grid_canvas.bind("<Configure>", self.on_grid_canvas_configure)
 
         self.root.bind("<Left>", lambda e: self.previous_scene())
         self.root.bind("<Right>", lambda e: self.next_scene())
@@ -266,7 +266,9 @@ class TheatreApp:
             self.card_frames[actor] = frame
             self.card_name_labels[actor] = name
 
-        self.update_card_sizes()
+        self.grid_canvas.update_idletasks()
+        self.sync_canvas_window()
+        self.update_card_sizes(force=True)
 
         self.grid_canvas.update_idletasks()
         self.grid_canvas.configure(scrollregion=self.grid_canvas.bbox("all"))
@@ -274,19 +276,23 @@ class TheatreApp:
     def on_grid_frame_configure(self, _event):
         self.grid_canvas.configure(scrollregion=self.grid_canvas.bbox("all"))
 
-    def on_grid_canvas_configure(self, _event):
+    def sync_canvas_window(self):
         self.grid_canvas.itemconfig(
             self.grid_canvas_window,
             width=self.grid_canvas.winfo_width(),
             height=self.grid_canvas.winfo_height()
         )
 
-    def on_root_configure(self, _event):
-        window_size = (self.root.winfo_width(), self.root.winfo_height())
+    def on_root_configure(self, event):
+        if event.widget is not self.root:
+            return
+
+        window_size = (event.width, event.height)
         if window_size == self.last_window_size:
             return
 
         self.last_window_size = window_size
+        self.sync_canvas_window()
         self.update_card_sizes(force=True)
 
     def load_settings(self):
@@ -370,16 +376,20 @@ class TheatreApp:
         count = len(self.actors)
         available_width = max(self.grid_canvas.winfo_width() - 20, 1)
         total_padding = count * 20
+
+        # Base square size from horizontal space (all cards identical)
         per_card_from_width = max(70, (available_width - total_padding) // count)
-        per_card = per_card_from_width
-        base_font = 9 if per_card < 90 else 10 if per_card < 120 else 11
+
+        base_font = 9 if per_card_from_width < 90 else 10 if per_card_from_width < 120 else 11
         font_size = max(8, base_font + self.font_size_adjust)
 
+        # Ensure the biggest actor name can fit in two lines; use that size for ALL cards
         longest_name_len = max((len(str(actor).strip()) for actor in self.actors), default=1)
         min_for_two_lines = int(((longest_name_len / 2.0) * max(font_size - 2, 1)) + 20)
         min_for_height = int((font_size * 2.8) + 16)
-        per_card = max(per_card_from_width, min_for_two_lines, min_for_height)
+        uniform_card_size = max(per_card_from_width, min_for_two_lines, min_for_height)
 
+        per_card = uniform_card_size
         base_font = 9 if per_card < 90 else 10 if per_card < 120 else 11
         font_size = max(8, base_font + self.font_size_adjust)
 
