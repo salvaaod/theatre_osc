@@ -119,11 +119,9 @@ class TheatreApp:
         )
         self.card_frames = {}
         self.card_name_labels = {}
-        self.base_card_font_size = 10
-        self.font_size_adjust = 0
         self.card_font_size = 10
-        self.card_size = 90
-        self.last_size_signature = None
+        self.card_width = 140
+        self.card_height = 90
         self.last_window_size = (0, 0)
         self.last_excel_path = None
 
@@ -170,7 +168,11 @@ class TheatreApp:
         tk.Button(controls, text="Previous", command=self.previous_scene).pack(side="left", padx=5)
         tk.Button(controls, text="Next", command=self.next_scene).pack(side="left", padx=5)
         tk.Button(controls, text="GO", command=self.apply_scene, width=10).pack(side="left", padx=10)
-        tk.Button(controls, text="A-", command=self.decrease_font_size, width=4).pack(side="left", padx=(20, 5))
+        tk.Button(controls, text="H-", command=self.decrease_card_width, width=4).pack(side="left", padx=(20, 5))
+        tk.Button(controls, text="H+", command=self.increase_card_width, width=4).pack(side="left", padx=5)
+        tk.Button(controls, text="V-", command=self.decrease_card_height, width=4).pack(side="left", padx=(10, 5))
+        tk.Button(controls, text="V+", command=self.increase_card_height, width=4).pack(side="left", padx=5)
+        tk.Button(controls, text="A-", command=self.decrease_font_size, width=4).pack(side="left", padx=(10, 5))
         tk.Button(controls, text="A+", command=self.increase_font_size, width=4).pack(side="left", padx=5)
 
         self.grid_canvas = tk.Canvas(self.root, bg="black", highlightthickness=0)
@@ -244,7 +246,6 @@ class TheatreApp:
 
         self.card_frames.clear()
         self.card_name_labels.clear()
-        self.last_size_signature = None
 
         for i, actor in enumerate(self.actors):
             row = 0
@@ -268,7 +269,7 @@ class TheatreApp:
 
         self.grid_canvas.update_idletasks()
         self.sync_canvas_window()
-        self.update_card_sizes(force=True)
+        self.update_card_sizes()
 
         self.grid_canvas.update_idletasks()
         self.grid_canvas.configure(scrollregion=self.grid_canvas.bbox("all"))
@@ -293,7 +294,6 @@ class TheatreApp:
 
         self.last_window_size = window_size
         self.sync_canvas_window()
-        self.update_card_sizes(force=True)
 
     def load_settings(self):
         if not os.path.exists(self.settings_path):
@@ -307,6 +307,9 @@ class TheatreApp:
             height = int(settings.get("height", 800))
             x = int(settings.get("x", 100))
             y = int(settings.get("y", 100))
+            self.card_width = int(settings.get("card_width", 140))
+            self.card_height = int(settings.get("card_height", 90))
+            self.card_font_size = int(settings.get("card_font_size", 10))
             self.root.geometry(f"{width}x{height}+{x}+{y}")
             last_excel = settings.get("last_excel_path", "")
             if isinstance(last_excel, str) and last_excel.strip():
@@ -322,6 +325,9 @@ class TheatreApp:
             "height": self.root.winfo_height(),
             "x": self.root.winfo_x(),
             "y": self.root.winfo_y(),
+            "card_width": self.card_width,
+            "card_height": self.card_height,
+            "card_font_size": self.card_font_size,
             "last_excel_path": self.last_excel_path,
         }
 
@@ -332,16 +338,27 @@ class TheatreApp:
             logging.warning("Could not save app settings: %s", e)
 
     def try_load_last_excel(self):
-        if not self.last_excel_path or not os.path.isfile(self.last_excel_path):
+        if self.last_excel_path and os.path.isfile(self.last_excel_path):
+            self.load_excel_from_path(self.last_excel_path, show_error_dialog=False)
             return
-        self.load_excel_from_path(self.last_excel_path, show_error_dialog=False)
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        excel_candidates = []
+        for file_name in os.listdir(script_dir):
+            lower_name = file_name.lower()
+            if lower_name.endswith(".xlsx") or lower_name.endswith(".xls"):
+                excel_candidates.append(os.path.join(script_dir, file_name))
+
+        if excel_candidates:
+            excel_candidates.sort()
+            self.load_excel_from_path(excel_candidates[0], show_error_dialog=False)
 
     def format_actor_name(self, actor):
         actor = str(actor).strip()
         if not actor:
             return ""
 
-        chars_per_line = max(4, (self.card_size - 16) // max(self.card_font_size - 2, 1))
+        chars_per_line = max(4, (self.card_width - 16) // max(self.card_font_size - 2, 1))
         if len(actor) <= chars_per_line:
             return actor
 
@@ -369,42 +386,17 @@ class TheatreApp:
             line2 = f"{line2[:chars_per_line - 1]}…"
         return f"{line1}\n{line2}"
 
-    def update_card_sizes(self, force=False):
+    def update_card_sizes(self):
         if not self.actors:
             return
 
-        count = len(self.actors)
-        available_width = max(self.grid_canvas.winfo_width() - 20, 1)
-        total_padding = count * 20
-
-        # Base square size from horizontal space (all cards identical)
-        per_card_from_width = max(70, (available_width - total_padding) // count)
-
-        base_font = 9 if per_card_from_width < 90 else 10 if per_card_from_width < 120 else 11
-        font_size = max(8, base_font + self.font_size_adjust)
-
-        # Ensure the biggest actor name can fit in two lines; use that size for ALL cards
-        longest_name_len = max((len(str(actor).strip()) for actor in self.actors), default=1)
-        min_for_two_lines = int(((longest_name_len / 2.0) * max(font_size - 2, 1)) + 20)
-        min_for_height = int((font_size * 2.8) + 16)
-        uniform_card_size = max(per_card_from_width, min_for_two_lines, min_for_height)
-
-        per_card = uniform_card_size
-        base_font = 9 if per_card < 90 else 10 if per_card < 120 else 11
-        font_size = max(8, base_font + self.font_size_adjust)
-
-        size_signature = (count, available_width, per_card, font_size)
-        if not force and self.last_size_signature == size_signature:
-            return
-
-        self.card_size = per_card
-        self.base_card_font_size = base_font
-        self.card_font_size = font_size
-        self.last_size_signature = size_signature
+        self.card_width = max(70, self.card_width)
+        self.card_height = max(40, self.card_height)
+        self.card_font_size = max(8, min(48, self.card_font_size))
 
         for actor in self.actors:
             frame = self.card_frames[actor]
-            frame.configure(width=self.card_size, height=self.card_size)
+            frame.configure(width=self.card_width, height=self.card_height)
             frame.grid_propagate(False)
             self.card_name_labels[actor].configure(
                 font=("Helvetica", self.card_font_size, "bold"),
@@ -413,14 +405,34 @@ class TheatreApp:
             )
 
     def increase_font_size(self):
-        self.font_size_adjust = min(self.font_size_adjust + 1, 8)
-        self.last_size_signature = None
-        self.update_card_sizes(force=True)
+        self.card_font_size += 1
+        self.update_card_sizes()
+        self.save_settings()
 
     def decrease_font_size(self):
-        self.font_size_adjust = max(self.font_size_adjust - 1, -6)
-        self.last_size_signature = None
-        self.update_card_sizes(force=True)
+        self.card_font_size -= 1
+        self.update_card_sizes()
+        self.save_settings()
+
+    def increase_card_width(self):
+        self.card_width += 10
+        self.update_card_sizes()
+        self.save_settings()
+
+    def decrease_card_width(self):
+        self.card_width -= 10
+        self.update_card_sizes()
+        self.save_settings()
+
+    def increase_card_height(self):
+        self.card_height += 10
+        self.update_card_sizes()
+        self.save_settings()
+
+    def decrease_card_height(self):
+        self.card_height -= 10
+        self.update_card_sizes()
+        self.save_settings()
 
     def on_close(self):
         self.save_settings()
