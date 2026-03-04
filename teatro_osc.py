@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import json
 import time
 import logging
 import tkinter as tk
@@ -28,6 +29,7 @@ DEFAULT_OSC_VALUE_FOR_OFF = 0
 
 TRUTHY = {"YES", "Y", "TRUE", "T", "1", "ON"}
 FALSY = {"NO", "N", "FALSE", "F", "0", "OFF", ""}
+WINDOW_SETTINGS_FILE = "window_settings.json"
 
 
 # ==============================
@@ -112,8 +114,14 @@ class TheatreApp:
         self.last_live_state = None
 
         self.live_mode = tk.BooleanVar(value=False)
+        self.window_settings_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            WINDOW_SETTINGS_FILE
+        )
 
         self.build_ui()
+        self.load_window_settings()
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     # ==============================
     # UI
@@ -153,8 +161,27 @@ class TheatreApp:
         tk.Button(controls, text="Next", command=self.next_scene).pack(side="left", padx=5)
         tk.Button(controls, text="GO", command=self.apply_scene, width=10).pack(side="left", padx=10)
 
-        self.grid_frame = tk.Frame(self.root, bg="black")
-        self.grid_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        self.grid_canvas = tk.Canvas(self.root, bg="black", highlightthickness=0)
+        self.grid_canvas.pack(fill="both", expand=True, padx=20, pady=(20, 0))
+
+        self.grid_scrollbar = tk.Scrollbar(
+            self.root,
+            orient="horizontal",
+            command=self.grid_canvas.xview
+        )
+        self.grid_scrollbar.pack(fill="x", padx=20, pady=(0, 20))
+
+        self.grid_canvas.configure(xscrollcommand=self.grid_scrollbar.set)
+
+        self.grid_frame = tk.Frame(self.grid_canvas, bg="black")
+        self.grid_canvas_window = self.grid_canvas.create_window(
+            (0, 0),
+            window=self.grid_frame,
+            anchor="nw"
+        )
+
+        self.grid_frame.bind("<Configure>", self.on_grid_frame_configure)
+        self.grid_canvas.bind("<Configure>", self.on_grid_canvas_configure)
 
         self.mic_labels = {}
 
@@ -204,10 +231,9 @@ class TheatreApp:
 
         self.mic_labels.clear()
 
-        cols = 4
         for i, actor in enumerate(self.actors):
-            row = i // cols
-            col = i % cols
+            row = 0
+            col = i
 
             frame = tk.Frame(self.grid_frame, bg="#111111", bd=2, relief="ridge")
             frame.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
@@ -221,6 +247,51 @@ class TheatreApp:
             state.pack(pady=5)
 
             self.mic_labels[actor] = state
+
+        self.grid_canvas.update_idletasks()
+        self.grid_canvas.configure(scrollregion=self.grid_canvas.bbox("all"))
+
+    def on_grid_frame_configure(self, _event):
+        self.grid_canvas.configure(scrollregion=self.grid_canvas.bbox("all"))
+
+    def on_grid_canvas_configure(self, _event):
+        self.grid_canvas.itemconfig(self.grid_canvas_window, height=self.grid_canvas.winfo_height())
+
+    def load_window_settings(self):
+        if not os.path.exists(self.window_settings_path):
+            return
+
+        try:
+            with open(self.window_settings_path, "r", encoding="utf-8") as settings_file:
+                settings = json.load(settings_file)
+
+            width = int(settings.get("width", 1100))
+            height = int(settings.get("height", 800))
+            x = int(settings.get("x", 100))
+            y = int(settings.get("y", 100))
+            self.root.geometry(f"{width}x{height}+{x}+{y}")
+        except Exception as e:
+            logging.warning("Could not load window settings: %s", e)
+
+    def save_window_settings(self):
+        self.root.update_idletasks()
+
+        settings = {
+            "width": self.root.winfo_width(),
+            "height": self.root.winfo_height(),
+            "x": self.root.winfo_x(),
+            "y": self.root.winfo_y(),
+        }
+
+        try:
+            with open(self.window_settings_path, "w", encoding="utf-8") as settings_file:
+                json.dump(settings, settings_file, indent=2)
+        except Exception as e:
+            logging.warning("Could not save window settings: %s", e)
+
+    def on_close(self):
+        self.save_window_settings()
+        self.root.destroy()
 
     # ==============================
     # Scene Navigation
@@ -300,12 +371,10 @@ class TheatreApp:
 
 def main():
     root = tk.Tk()
-    root.geometry("1100x800")
     app = TheatreApp(root)
     root.mainloop()
 
 
 if __name__ == "__main__":
     main()
-
 
