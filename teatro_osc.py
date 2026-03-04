@@ -121,6 +121,8 @@ class TheatreApp:
         self.card_frames = {}
         self.card_name_labels = {}
         self.card_font_size = 12
+        self.card_size = 90
+        self.last_size_signature = None
         self.last_excel_path = None
 
         self.build_ui()
@@ -246,6 +248,7 @@ class TheatreApp:
 
         self.card_frames.clear()
         self.card_name_labels.clear()
+        self.last_size_signature = None
 
         for i, actor in enumerate(self.actors):
             row = 0
@@ -276,7 +279,11 @@ class TheatreApp:
         self.grid_canvas.configure(scrollregion=self.grid_canvas.bbox("all"))
 
     def on_grid_canvas_configure(self, _event):
-        self.grid_canvas.itemconfig(self.grid_canvas_window, height=self.grid_canvas.winfo_height())
+        self.grid_canvas.itemconfig(
+            self.grid_canvas_window,
+            width=self.grid_canvas.winfo_width(),
+            height=self.grid_canvas.winfo_height()
+        )
         self.update_card_sizes()
 
     def load_settings(self):
@@ -324,20 +331,27 @@ class TheatreApp:
         if not self.actors:
             return
 
-        available_width = max(self.grid_canvas.winfo_width() - 20, 1)
         count = len(self.actors)
-        horizontal_padding_per_card = 20
-        usable_width = max(available_width - (count * horizontal_padding_per_card), count)
-        per_card = max(70, usable_width // count)
-        self.card_font_size = 9 if per_card < 90 else 10 if per_card < 120 else 11
+        available_width = max(self.grid_canvas.winfo_width() - 20, 1)
+        total_padding = count * 20
+        per_card = max(70, (available_width - total_padding) // count)
+        font_size = 9 if per_card < 90 else 10 if per_card < 120 else 11
+
+        size_signature = (count, available_width, per_card, font_size)
+        if self.last_size_signature == size_signature:
+            return
+
+        self.card_size = per_card
+        self.card_font_size = font_size
+        self.last_size_signature = size_signature
 
         for actor in self.actors:
             frame = self.card_frames[actor]
-            frame.configure(width=per_card, height=per_card)
+            frame.configure(width=self.card_size, height=self.card_size)
             frame.grid_propagate(False)
             self.card_name_labels[actor].configure(
                 font=("Helvetica", self.card_font_size, "bold"),
-                wraplength=max(per_card - 12, 40)
+                wraplength=max(self.card_size - 12, 40)
             )
 
     def on_close(self):
