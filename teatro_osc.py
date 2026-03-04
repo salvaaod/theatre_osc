@@ -29,7 +29,7 @@ DEFAULT_OSC_VALUE_FOR_OFF = 0
 
 TRUTHY = {"YES", "Y", "TRUE", "T", "1", "ON"}
 FALSY = {"NO", "N", "FALSE", "F", "0", "OFF", ""}
-WINDOW_SETTINGS_FILE = "window_settings.json"
+APP_SETTINGS_FILE = "theatre_settings.json"
 
 
 # ==============================
@@ -114,13 +114,17 @@ class TheatreApp:
         self.last_live_state = None
 
         self.live_mode = tk.BooleanVar(value=False)
-        self.window_settings_path = os.path.join(
+        self.settings_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
-            WINDOW_SETTINGS_FILE
+            APP_SETTINGS_FILE
         )
+        self.card_frames = {}
+        self.card_name_labels = {}
+        self.last_excel_path = None
 
         self.build_ui()
-        self.load_window_settings()
+        self.load_settings()
+        self.try_load_last_excel()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     # ==============================
@@ -201,12 +205,21 @@ class TheatreApp:
         if not path:
             return
 
+        self.load_excel_from_path(path)
+
+    def load_excel_from_path(self, path, show_error_dialog=True):
+        if not path:
+            return False
+
         try:
             self.df = load_excel_file(path)
             self.scenes = dataframe_to_scene_dict(self.df)
         except Exception as e:
-            messagebox.showerror("Error", str(e))
-            return
+            if show_error_dialog:
+                messagebox.showerror("Error", str(e))
+            else:
+                logging.warning("Could not load Excel file (%s): %s", path, e)
+            return False
 
         self.scene_names = list(self.scenes.keys())
         self.actors = list(self.df.columns)
@@ -214,11 +227,14 @@ class TheatreApp:
 
         self.current_scene_index = 0
         self.last_live_state = None
+        self.last_excel_path = path
 
         self.build_grid()
         self.render_scene()
+        self.save_settings()
 
         logging.info("Loaded Excel: %s", os.path.basename(path))
+        return True
 
     # ==============================
     # Grid
@@ -230,6 +246,8 @@ class TheatreApp:
             widget.destroy()
 
         self.mic_labels.clear()
+        self.card_frames.clear()
+        self.card_name_labels.clear()
 
         for i, actor in enumerate(self.actors):
             row = 0
@@ -247,6 +265,10 @@ class TheatreApp:
             state.pack(pady=5)
 
             self.mic_labels[actor] = state
+            self.card_frames[actor] = frame
+            self.card_name_labels[actor] = name
+
+        self.update_card_sizes()
 
         self.grid_canvas.update_idletasks()
         self.grid_canvas.configure(scrollregion=self.grid_canvas.bbox("all"))
@@ -256,13 +278,14 @@ class TheatreApp:
 
     def on_grid_canvas_configure(self, _event):
         self.grid_canvas.itemconfig(self.grid_canvas_window, height=self.grid_canvas.winfo_height())
+        self.update_card_sizes()
 
-    def load_window_settings(self):
-        if not os.path.exists(self.window_settings_path):
+    def load_settings(self):
+        if not os.path.exists(self.settings_path):
             return
 
         try:
-            with open(self.window_settings_path, "r", encoding="utf-8") as settings_file:
+            with open(self.settings_path, "r", encoding="utf-8") as settings_file:
                 settings = json.load(settings_file)
 
             width = int(settings.get("width", 1100))
@@ -270,10 +293,13 @@ class TheatreApp:
             x = int(settings.get("x", 100))
             y = int(settings.get("y", 100))
             self.root.geometry(f"{width}x{height}+{x}+{y}")
+            last_excel = settings.get("last_excel_path", "")
+            if isinstance(last_excel, str) and last_excel.strip():
+                self.last_excel_path = last_excel
         except Exception as e:
-            logging.warning("Could not load window settings: %s", e)
+            logging.warning("Could not load app settings: %s", e)
 
-    def save_window_settings(self):
+    def save_settings(self):
         self.root.update_idletasks()
 
         settings = {
@@ -281,16 +307,37 @@ class TheatreApp:
             "height": self.root.winfo_height(),
             "x": self.root.winfo_x(),
             "y": self.root.winfo_y(),
+            "last_excel_path": self.last_excel_path,
         }
 
         try:
-            with open(self.window_settings_path, "w", encoding="utf-8") as settings_file:
+            with open(self.settings_path, "w", encoding="utf-8") as settings_file:
                 json.dump(settings, settings_file, indent=2)
         except Exception as e:
-            logging.warning("Could not save window settings: %s", e)
+            logging.warning("Could not save app settings: %s", e)
+
+    def try_load_last_excel(self):
+        if not self.last_excel_path or not os.path.isfile(self.last_excel_path):
+            return
+        self.load_excel_from_path(self.last_excel_path, show_error_dialog=False)
+
+    def update_card_sizes(self):
+        if not self.actors:
+            return
+
+        available_width = max(self.grid_canvas.winfo_width() - 20, 1)
+        count = len(self.actors)
+        per_card = max(90, min(220, (available_width // count) - 20))
+        name_font_size = 12 if per_card < 120 else 14 if per_card < 160 else 16
+
+        for actor in self.actors:
+            frame = self.card_frames[actor]
+            frame.configure(width=per_card)
+            frame.grid_propagate(False)
+            self.card_name_labels[actor].configure(font=("Helvetica", name_font_size, "bold"), wraplength=per_card - 16)
 
     def on_close(self):
-        self.save_window_settings()
+        self.save_settings()
         self.root.destroy()
 
     # ==============================
@@ -377,4 +424,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
