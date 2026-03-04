@@ -2,10 +2,9 @@
 
 import os
 import json
-import time
 import logging
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import filedialog, messagebox
 
 import pandas as pd
 from pythonosc.udp_client import SimpleUDPClient
@@ -120,6 +119,12 @@ class TheatreApp:
         )
         self.card_frames = {}
         self.card_name_labels = {}
+        self.base_card_font_size = 10
+        self.font_size_adjust = 0
+        self.card_font_size = 10
+        self.card_size = 90
+        self.last_size_signature = None
+        self.last_window_size = (0, 0)
         self.last_excel_path = None
 
         self.build_ui()
@@ -154,7 +159,8 @@ class TheatreApp:
             text="No Scene",
             font=("Helvetica", 24, "bold"),
             fg="white",
-            bg="black"
+            bg="black",
+            width=24
         )
         self.scene_label.pack(pady=10)
 
@@ -164,18 +170,11 @@ class TheatreApp:
         tk.Button(controls, text="Previous", command=self.previous_scene).pack(side="left", padx=5)
         tk.Button(controls, text="Next", command=self.next_scene).pack(side="left", padx=5)
         tk.Button(controls, text="GO", command=self.apply_scene, width=10).pack(side="left", padx=10)
+        tk.Button(controls, text="A-", command=self.decrease_font_size, width=4).pack(side="left", padx=(20, 5))
+        tk.Button(controls, text="A+", command=self.increase_font_size, width=4).pack(side="left", padx=5)
 
         self.grid_canvas = tk.Canvas(self.root, bg="black", highlightthickness=0)
-        self.grid_canvas.pack(fill="both", expand=True, padx=20, pady=(20, 0))
-
-        self.grid_scrollbar = tk.Scrollbar(
-            self.root,
-            orient="horizontal",
-            command=self.grid_canvas.xview
-        )
-        self.grid_scrollbar.pack(fill="x", padx=20, pady=(0, 20))
-
-        self.grid_canvas.configure(xscrollcommand=self.grid_scrollbar.set)
+        self.grid_canvas.pack(fill="both", expand=True, padx=20, pady=(20, 20))
 
         self.grid_frame = tk.Frame(self.grid_canvas, bg="black")
         self.grid_canvas_window = self.grid_canvas.create_window(
@@ -185,14 +184,12 @@ class TheatreApp:
         )
 
         self.grid_frame.bind("<Configure>", self.on_grid_frame_configure)
-        self.grid_canvas.bind("<Configure>", self.on_grid_canvas_configure)
-
-        self.mic_labels = {}
 
         self.root.bind("<Left>", lambda e: self.previous_scene())
         self.root.bind("<Right>", lambda e: self.next_scene())
         self.root.bind("<space>", lambda e: self.apply_scene())
         self.root.bind("<Return>", lambda e: self.apply_scene())
+        self.root.bind("<Configure>", self.on_root_configure)
 
     # ==============================
     # Excel Loading
@@ -245,9 +242,9 @@ class TheatreApp:
         for widget in self.grid_frame.winfo_children():
             widget.destroy()
 
-        self.mic_labels.clear()
         self.card_frames.clear()
         self.card_name_labels.clear()
+        self.last_size_signature = None
 
         for i, actor in enumerate(self.actors):
             row = 0
@@ -256,19 +253,22 @@ class TheatreApp:
             frame = tk.Frame(self.grid_frame, bg="#111111", bd=2, relief="ridge")
             frame.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
 
-            name = tk.Label(frame, text=actor, fg="white", bg="#111111",
-                            font=("Helvetica", 16, "bold"))
-            name.pack(pady=5)
+            name = tk.Label(
+                frame,
+                text=actor,
+                fg="white",
+                bg="#990000",
+                font=("Helvetica", self.card_font_size, "bold"),
+                justify="center"
+            )
+            name.pack(fill="both", expand=True, padx=4, pady=4)
 
-            state = tk.Label(frame, text="OFF", bg="red",
-                             font=("Helvetica", 18, "bold"), width=8)
-            state.pack(pady=5)
-
-            self.mic_labels[actor] = state
             self.card_frames[actor] = frame
             self.card_name_labels[actor] = name
 
-        self.update_card_sizes()
+        self.grid_canvas.update_idletasks()
+        self.sync_canvas_window()
+        self.update_card_sizes(force=True)
 
         self.grid_canvas.update_idletasks()
         self.grid_canvas.configure(scrollregion=self.grid_canvas.bbox("all"))
@@ -276,9 +276,24 @@ class TheatreApp:
     def on_grid_frame_configure(self, _event):
         self.grid_canvas.configure(scrollregion=self.grid_canvas.bbox("all"))
 
-    def on_grid_canvas_configure(self, _event):
-        self.grid_canvas.itemconfig(self.grid_canvas_window, height=self.grid_canvas.winfo_height())
-        self.update_card_sizes()
+    def sync_canvas_window(self):
+        self.grid_canvas.itemconfig(
+            self.grid_canvas_window,
+            width=self.grid_canvas.winfo_width(),
+            height=self.grid_canvas.winfo_height()
+        )
+
+    def on_root_configure(self, event):
+        if event.widget is not self.root:
+            return
+
+        window_size = (event.width, event.height)
+        if window_size == self.last_window_size:
+            return
+
+        self.last_window_size = window_size
+        self.sync_canvas_window()
+        self.update_card_sizes(force=True)
 
     def load_settings(self):
         if not os.path.exists(self.settings_path):
@@ -321,20 +336,91 @@ class TheatreApp:
             return
         self.load_excel_from_path(self.last_excel_path, show_error_dialog=False)
 
-    def update_card_sizes(self):
+    def format_actor_name(self, actor):
+        actor = str(actor).strip()
+        if not actor:
+            return ""
+
+        chars_per_line = max(4, (self.card_size - 16) // max(self.card_font_size - 2, 1))
+        if len(actor) <= chars_per_line:
+            return actor
+
+        words = actor.split()
+        if len(words) > 1:
+            target = len(actor) // 2
+            best_split = None
+
+            for idx in range(1, len(words)):
+                left = " ".join(words[:idx])
+                right = " ".join(words[idx:])
+                score = abs(len(left) - target)
+                if best_split is None or score < best_split[0]:
+                    best_split = (score, left, right)
+
+            if best_split:
+                _, line1, line2 = best_split
+                if len(line1) <= chars_per_line and len(line2) <= chars_per_line:
+                    return f"{line1}\n{line2}"
+
+        split_at = min(chars_per_line, max(1, len(actor) // 2))
+        line1 = actor[:split_at].rstrip()
+        line2 = actor[split_at:].lstrip()
+        if len(line2) > chars_per_line:
+            line2 = f"{line2[:chars_per_line - 1]}…"
+        return f"{line1}\n{line2}"
+
+    def update_card_sizes(self, force=False):
         if not self.actors:
             return
 
-        available_width = max(self.grid_canvas.winfo_width() - 20, 1)
         count = len(self.actors)
-        per_card = max(90, min(220, (available_width // count) - 20))
-        name_font_size = 12 if per_card < 120 else 14 if per_card < 160 else 16
+        available_width = max(self.grid_canvas.winfo_width() - 20, 1)
+        total_padding = count * 20
+
+        # Base square size from horizontal space (all cards identical)
+        per_card_from_width = max(70, (available_width - total_padding) // count)
+
+        base_font = 9 if per_card_from_width < 90 else 10 if per_card_from_width < 120 else 11
+        font_size = max(8, base_font + self.font_size_adjust)
+
+        # Ensure the biggest actor name can fit in two lines; use that size for ALL cards
+        longest_name_len = max((len(str(actor).strip()) for actor in self.actors), default=1)
+        min_for_two_lines = int(((longest_name_len / 2.0) * max(font_size - 2, 1)) + 20)
+        min_for_height = int((font_size * 2.8) + 16)
+        uniform_card_size = max(per_card_from_width, min_for_two_lines, min_for_height)
+
+        per_card = uniform_card_size
+        base_font = 9 if per_card < 90 else 10 if per_card < 120 else 11
+        font_size = max(8, base_font + self.font_size_adjust)
+
+        size_signature = (count, available_width, per_card, font_size)
+        if not force and self.last_size_signature == size_signature:
+            return
+
+        self.card_size = per_card
+        self.base_card_font_size = base_font
+        self.card_font_size = font_size
+        self.last_size_signature = size_signature
 
         for actor in self.actors:
             frame = self.card_frames[actor]
-            frame.configure(width=per_card)
+            frame.configure(width=self.card_size, height=self.card_size)
             frame.grid_propagate(False)
-            self.card_name_labels[actor].configure(font=("Helvetica", name_font_size, "bold"), wraplength=per_card - 16)
+            self.card_name_labels[actor].configure(
+                font=("Helvetica", self.card_font_size, "bold"),
+                text=self.format_actor_name(actor),
+                justify="center"
+            )
+
+    def increase_font_size(self):
+        self.font_size_adjust = min(self.font_size_adjust + 1, 8)
+        self.last_size_signature = None
+        self.update_card_sizes(force=True)
+
+    def decrease_font_size(self):
+        self.font_size_adjust = max(self.font_size_adjust - 1, -6)
+        self.last_size_signature = None
+        self.update_card_sizes(force=True)
 
     def on_close(self):
         self.save_settings()
@@ -364,11 +450,14 @@ class TheatreApp:
         self.scene_label.config(text=f"Scene: {scene}")
 
         for actor, enabled in self.scenes[scene].items():
-            label = self.mic_labels[actor]
+            frame = self.card_frames[actor]
+            label = self.card_name_labels[actor]
             if enabled:
-                label.config(text="ON", bg="green")
+                frame.config(bg="#008000")
+                label.config(bg="#008000")
             else:
-                label.config(text="OFF", bg="red")
+                frame.config(bg="#990000")
+                label.config(bg="#990000")
 
     # ==============================
     # Apply Scene (Send OSC)
