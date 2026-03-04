@@ -20,10 +20,17 @@ DEFAULT_ADDRESS_TEMPLATE = "/ch/{ch:02d}/mix/on"
 DEFAULT_OSC_VALUE_FOR_ON = 1
 DEFAULT_OSC_VALUE_FOR_OFF = 0
 
-
 TRUTHY = {"YES", "Y", "TRUE", "T", "1", "ON"}
 FALSY = {"NO", "N", "FALSE", "F", "0", "OFF", ""}
 APP_SETTINGS_FILE = "theatre_settings.json"
+
+# Pure canvas drawing constants
+CARD_SPACING = 20
+CARD_BORDER_WIDTH = 3
+CARD_ON_COLOR = "#008000"
+CARD_OFF_COLOR = "#990000"
+CARD_TEXT_COLOR = "white"
+CANVAS_BG = "black"
 
 
 # ==============================
@@ -63,12 +70,12 @@ def build_channel_map(actors):
     return {actor: i + 1 for i, actor in enumerate(actors)}
 
 
-def split_actor_text(actor, card_width, font_size):
+def split_actor_text(actor, box_width, text_size):
     actor = str(actor).strip()
     if not actor:
         return ""
 
-    chars_per_line = max(3, (card_width - 12) // max(font_size - 2, 1))
+    chars_per_line = max(3, (box_width - 16) // max(text_size - 2, 1))
     if len(actor) <= chars_per_line:
         return actor
 
@@ -76,17 +83,20 @@ def split_actor_text(actor, card_width, font_size):
     if len(words) > 1:
         line1 = ""
         line2_words = []
-        for w in words:
-            candidate = f"{line1} {w}".strip()
+        for word in words:
+            candidate = f"{line1} {word}".strip()
             if len(candidate) <= chars_per_line:
                 line1 = candidate
             else:
-                line2_words.append(w)
+                line2_words.append(word)
+
         if line1:
-            line2 = " ".join(line2_words).strip()
+            line2 = " ".join(line2_words)
             if len(line2) > chars_per_line:
                 line2 = f"{line2[:chars_per_line - 1]}…"
-            return f"{line1}\n{line2}" if line2 else line1
+            if line2:
+                return f"{line1}\n{line2}"
+            return line1
 
     line1 = actor[:chars_per_line].rstrip()
     line2 = actor[chars_per_line:].lstrip()
@@ -111,25 +121,24 @@ def find_startup_excel(base_dir, remembered_path):
         if not os.path.isdir(scan_dir):
             continue
         for name in os.listdir(scan_dir):
-            low = name.lower()
-            if low.endswith(".xlsx") or low.endswith(".xls"):
+            if name.lower().endswith((".xlsx", ".xls")):
                 candidates.append(os.path.join(scan_dir, name))
 
-    unique_existing = []
+    existing = []
     seen = set()
-    for p in candidates:
-        abs_path = os.path.abspath(p)
+    for path in candidates:
+        abs_path = os.path.abspath(path)
         if abs_path in seen:
             continue
         seen.add(abs_path)
         if os.path.isfile(abs_path):
-            unique_existing.append(abs_path)
+            existing.append(abs_path)
 
-    if not unique_existing:
+    if not existing:
         return None
 
-    unique_existing.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-    return unique_existing[0]
+    existing.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    return existing[0]
 
 
 # ==============================
@@ -158,7 +167,7 @@ class TheatreApp:
     def __init__(self, root):
         self.root = root
         self.root.title("X32 Theatre Mic Controller")
-        self.root.configure(bg="black")
+        self.root.configure(bg=CANVAS_BG)
 
         logging.basicConfig(
             filename="show_log.txt",
@@ -180,14 +189,12 @@ class TheatreApp:
         self.last_live_state = None
         self.last_excel_path = ""
 
-        # Static dimensions configured by controls only
+        # Static box/text configuration
         self.card_width = 140
         self.card_height = 90
         self.card_font_size = 12
 
         self.live_mode = tk.BooleanVar(value=False)
-        self.card_frames = {}
-        self.card_name_labels = {}
 
         self.build_ui()
         self.load_settings()
@@ -198,33 +205,32 @@ class TheatreApp:
     # ---------- UI ----------
 
     def build_ui(self):
-        top = tk.Frame(self.root, bg="black")
+        top = tk.Frame(self.root, bg=CANVAS_BG)
         top.pack(fill="x", padx=10, pady=10)
 
         tk.Button(top, text="Load Excel", command=self.load_excel).pack(side="left")
 
-        self.live_checkbox = tk.Checkbutton(
+        tk.Checkbutton(
             top,
             text="LIVE MODE",
             variable=self.live_mode,
             fg="white",
-            bg="black",
-            selectcolor="black",
+            bg=CANVAS_BG,
+            selectcolor=CANVAS_BG,
             font=("Helvetica", 14)
-        )
-        self.live_checkbox.pack(side="right")
+        ).pack(side="right")
 
         self.scene_label = tk.Label(
             self.root,
             text="No Scene",
             font=("Helvetica", 24, "bold"),
             fg="white",
-            bg="black",
-            width=24
+            bg=CANVAS_BG,
+            width=24,
         )
         self.scene_label.pack(pady=10)
 
-        controls = tk.Frame(self.root, bg="black")
+        controls = tk.Frame(self.root, bg=CANVAS_BG)
         controls.pack()
 
         tk.Button(controls, text="Previous", command=self.previous_scene).pack(side="left", padx=5)
@@ -243,24 +249,20 @@ class TheatreApp:
             text="No Excel loaded",
             font=("Helvetica", 10),
             fg="#bbbbbb",
-            bg="black",
+            bg=CANVAS_BG,
             anchor="w"
         )
         self.status_label.pack(fill="x", padx=20, pady=(6, 0))
 
-        cards_container = tk.Frame(self.root, bg="black")
-        cards_container.pack(fill="both", expand=True, padx=20, pady=(20, 20))
+        canvas_container = tk.Frame(self.root, bg=CANVAS_BG)
+        canvas_container.pack(fill="both", expand=True, padx=20, pady=(20, 20))
 
-        self.cards_canvas = tk.Canvas(cards_container, bg="black", highlightthickness=0)
+        self.cards_canvas = tk.Canvas(canvas_container, bg=CANVAS_BG, highlightthickness=0)
         self.cards_canvas.pack(side="top", fill="both", expand=True)
 
-        self.hbar = tk.Scrollbar(cards_container, orient="horizontal", command=self.cards_canvas.xview)
-        self.hbar.pack(side="bottom", fill="x")
-        self.cards_canvas.configure(xscrollcommand=self.hbar.set)
-
-        self.cards_strip = tk.Frame(self.cards_canvas, bg="black")
-        self.cards_window_id = self.cards_canvas.create_window((0, 0), window=self.cards_strip, anchor="nw")
-        self.cards_strip.bind("<Configure>", self.on_cards_strip_configure)
+        hbar = tk.Scrollbar(canvas_container, orient="horizontal", command=self.cards_canvas.xview)
+        hbar.pack(side="bottom", fill="x")
+        self.cards_canvas.configure(xscrollcommand=hbar.set)
 
         self.root.bind("<Left>", lambda _e: self.previous_scene())
         self.root.bind("<Right>", lambda _e: self.next_scene())
@@ -272,7 +274,6 @@ class TheatreApp:
     def load_settings(self):
         if not os.path.exists(self.settings_path):
             return
-
         try:
             with open(self.settings_path, "r", encoding="utf-8") as f:
                 settings = json.load(f)
@@ -293,8 +294,7 @@ class TheatreApp:
 
     def save_settings(self):
         self.root.update_idletasks()
-
-        settings = {
+        payload = {
             "width": self.root.winfo_width(),
             "height": self.root.winfo_height(),
             "x": self.root.winfo_x(),
@@ -304,10 +304,9 @@ class TheatreApp:
             "card_font_size": self.card_font_size,
             "last_excel_path": self.last_excel_path,
         }
-
         try:
             with open(self.settings_path, "w", encoding="utf-8") as f:
-                json.dump(settings, f, indent=2)
+                json.dump(payload, f, indent=2)
         except Exception as exc:
             logging.warning("Could not save app settings: %s", exc)
 
@@ -315,9 +314,8 @@ class TheatreApp:
 
     def load_excel(self):
         path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx *.xls")])
-        if not path:
-            return
-        self.load_excel_from_path(path)
+        if path:
+            self.load_excel_from_path(path)
 
     def load_excel_from_path(self, path, show_error_dialog=True):
         if not path:
@@ -341,118 +339,117 @@ class TheatreApp:
             self.last_live_state = None
             self.last_excel_path = os.path.abspath(path)
 
-            self.build_cards()
-            self.render_scene()
+            self.draw_current_scene()
             self.status_label.config(text=f"Loaded Excel: {os.path.basename(path)}")
             self.save_settings()
-
             logging.info("Loaded Excel: %s", self.last_excel_path)
             return True
 
         except Exception as exc:
-            msg = f"Could not load Excel: {path} | {exc}"
-            self.status_label.config(text=msg)
-            logging.warning(msg)
+            message = f"Could not load Excel: {path} | {exc}"
+            self.status_label.config(text=message)
+            logging.warning(message)
             if show_error_dialog:
                 messagebox.showerror("Excel load error", str(exc))
             return False
 
     def try_load_startup_excel(self):
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        startup_path = find_startup_excel(base_dir, self.last_excel_path)
-        if not startup_path:
+        startup = find_startup_excel(base_dir, self.last_excel_path)
+        if not startup:
             self.status_label.config(text="No startup Excel found")
             return
 
-        if not self.load_excel_from_path(startup_path, show_error_dialog=False):
-            self.status_label.config(text=f"Startup Excel failed: {os.path.basename(startup_path)}")
+        if not self.load_excel_from_path(startup, show_error_dialog=False):
+            self.status_label.config(text=f"Startup Excel failed: {os.path.basename(startup)}")
 
-    # ---------- Card Drawing ----------
+    # ---------- Pure Canvas Drawing ----------
 
-    def clear_cards(self):
-        for w in self.cards_strip.winfo_children():
-            w.destroy()
-        self.card_frames.clear()
-        self.card_name_labels.clear()
-
-    def build_cards(self):
-        self.clear_cards()
-
-        for idx, actor in enumerate(self.actors):
-            frame = tk.Frame(self.cards_strip, bg="#111111", bd=2, relief="ridge")
-            frame.grid(row=0, column=idx, padx=10, pady=10)
-
-            label = tk.Label(
-                frame,
-                text=split_actor_text(actor, self.card_width, self.card_font_size),
-                fg="white",
-                bg="#990000",
-                font=("Helvetica", self.card_font_size, "bold"),
-                justify="center"
-            )
-            label.pack(fill="both", expand=True, padx=4, pady=4)
-
-            self.card_frames[actor] = frame
-            self.card_name_labels[actor] = label
-
-        self.apply_static_card_geometry()
-
-    def apply_static_card_geometry(self):
-        if not self.actors:
-            return
-
+    def clamp_size_values(self):
         self.card_width = max(40, int(self.card_width))
         self.card_height = max(30, int(self.card_height))
         self.card_font_size = max(6, int(self.card_font_size))
 
-        for actor in self.actors:
-            frame = self.card_frames[actor]
-            frame.configure(width=self.card_width, height=self.card_height)
-            frame.grid_propagate(False)
+    def draw_current_scene(self):
+        self.cards_canvas.delete("all")
+        self.clamp_size_values()
 
-            label = self.card_name_labels[actor]
-            label.configure(
-                font=("Helvetica", self.card_font_size, "bold"),
-                text=split_actor_text(actor, self.card_width, self.card_font_size),
-                justify="center"
+        if not self.scene_names:
+            self.scene_label.config(text="No Scene")
+            self.cards_canvas.configure(scrollregion=(0, 0, 0, 0))
+            return
+
+        scene_name = self.scene_names[self.current_scene_index]
+        scene_state = self.scenes[scene_name]
+        self.scene_label.config(text=f"Scene: {scene_name}")
+
+        canvas_width = (len(self.actors) * (self.card_width + CARD_SPACING)) + CARD_SPACING
+        canvas_height = self.card_height + (2 * CARD_SPACING)
+
+        self.cards_canvas.config(height=canvas_height)
+
+        for i, actor in enumerate(self.actors):
+            x1 = CARD_SPACING + i * (self.card_width + CARD_SPACING)
+            y1 = CARD_SPACING
+            x2 = x1 + self.card_width
+            y2 = y1 + self.card_height
+
+            enabled = bool(scene_state.get(actor, False))
+            box_color = CARD_ON_COLOR if enabled else CARD_OFF_COLOR
+
+            self.cards_canvas.create_rectangle(
+                x1,
+                y1,
+                x2,
+                y2,
+                outline=box_color,
+                fill=box_color,
+                width=CARD_BORDER_WIDTH,
             )
 
-        self.cards_canvas.update_idletasks()
-        self.cards_canvas.configure(scrollregion=self.cards_canvas.bbox("all"))
+            display_text = split_actor_text(actor, self.card_width, self.card_font_size)
+            self.cards_canvas.create_text(
+                (x1 + x2) / 2,
+                (y1 + y2) / 2,
+                text=display_text,
+                fill=CARD_TEXT_COLOR,
+                font=("Helvetica", self.card_font_size, "bold"),
+                justify="center",
+                width=max(10, self.card_width - 10),
+            )
 
-    def on_cards_strip_configure(self, _event):
-        self.cards_canvas.configure(scrollregion=self.cards_canvas.bbox("all"))
+        self.cards_canvas.configure(scrollregion=(0, 0, canvas_width, canvas_height))
 
-    # ---------- Controls ----------
+    # ---------- Size Controls ----------
 
     def increase_card_width(self):
         self.card_width += 10
-        self.apply_static_card_geometry()
+        self.draw_current_scene()
         self.save_settings()
 
     def decrease_card_width(self):
         self.card_width -= 10
-        self.apply_static_card_geometry()
+        self.draw_current_scene()
         self.save_settings()
 
     def increase_card_height(self):
         self.card_height += 10
-        self.apply_static_card_geometry()
+        self.draw_current_scene()
         self.save_settings()
 
     def decrease_card_height(self):
         self.card_height -= 10
-        self.apply_static_card_geometry()
+        self.draw_current_scene()
         self.save_settings()
 
     def increase_font_size(self):
         self.card_font_size += 1
-        self.apply_static_card_geometry()
+        self.draw_current_scene()
         self.save_settings()
 
     def decrease_font_size(self):
         self.card_font_size -= 1
-        self.apply_static_card_geometry()
+        self.draw_current_scene()
         self.save_settings()
 
     # ---------- Scene ----------
@@ -461,34 +458,13 @@ class TheatreApp:
         if not self.scene_names:
             return
         self.current_scene_index = (self.current_scene_index - 1) % len(self.scene_names)
-        self.render_scene()
+        self.draw_current_scene()
 
     def next_scene(self):
         if not self.scene_names:
             return
         self.current_scene_index = (self.current_scene_index + 1) % len(self.scene_names)
-        self.render_scene()
-
-    def render_scene(self):
-        if not self.scene_names:
-            return
-
-        scene_name = self.scene_names[self.current_scene_index]
-        self.scene_label.config(text=f"Scene: {scene_name}")
-        scene_state = self.scenes[scene_name]
-
-        for actor, enabled in scene_state.items():
-            frame = self.card_frames.get(actor)
-            label = self.card_name_labels.get(actor)
-            if not frame or not label:
-                continue
-
-            if enabled:
-                frame.config(bg="#008000")
-                label.config(bg="#008000")
-            else:
-                frame.config(bg="#990000")
-                label.config(bg="#990000")
+        self.draw_current_scene()
 
     def apply_scene(self):
         if not self.scene_names:
@@ -497,7 +473,7 @@ class TheatreApp:
         scene_name = self.scene_names[self.current_scene_index]
         scene_state = self.scenes[scene_name]
 
-        self.render_scene()
+        self.draw_current_scene()
 
         if not self.live_mode.get():
             logging.info("Preview scene: %s", scene_name)
