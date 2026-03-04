@@ -260,10 +260,6 @@ class TheatreApp:
         self.cards_canvas = tk.Canvas(canvas_container, bg=CANVAS_BG, highlightthickness=0)
         self.cards_canvas.pack(side="top", fill="both", expand=True)
 
-        hbar = tk.Scrollbar(canvas_container, orient="horizontal", command=self.cards_canvas.xview)
-        hbar.pack(side="bottom", fill="x")
-        self.cards_canvas.configure(xscrollcommand=hbar.set)
-
         self.root.bind("<Left>", lambda _e: self.previous_scene())
         self.root.bind("<Right>", lambda _e: self.next_scene())
         self.root.bind("<space>", lambda _e: self.apply_scene())
@@ -423,22 +419,22 @@ class TheatreApp:
     # ---------- Size Controls ----------
 
     def increase_card_width(self):
-        self.card_width += 10
+        self.card_width += 5
         self.draw_current_scene()
         self.save_settings()
 
     def decrease_card_width(self):
-        self.card_width -= 10
+        self.card_width -= 5
         self.draw_current_scene()
         self.save_settings()
 
     def increase_card_height(self):
-        self.card_height += 10
+        self.card_height += 5
         self.draw_current_scene()
         self.save_settings()
 
     def decrease_card_height(self):
-        self.card_height -= 10
+        self.card_height -= 5
         self.draw_current_scene()
         self.save_settings()
 
