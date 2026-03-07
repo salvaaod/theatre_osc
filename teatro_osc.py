@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import json
 import logging
 import os
@@ -51,6 +52,29 @@ BASE_CARD_SIZE = 80
 BASE_CONTROL_BUTTON_WIDTH = 112
 BASE_CONTROL_BUTTON_HEIGHT = 56
 BASE_CONTROL_BUTTON_FONT_SIZE = 14
+
+def setup_logging(debug=False):
+    level = logging.DEBUG if debug else logging.INFO
+    root = logging.getLogger()
+    root.setLevel(level)
+
+    for handler in list(root.handlers):
+        root.removeHandler(handler)
+
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+
+    file_handler = logging.FileHandler("show_log.txt", encoding="utf-8")
+    file_handler.setLevel(level)
+    file_handler.setFormatter(formatter)
+    root.addHandler(file_handler)
+
+    if debug:
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(level)
+        console_handler.setFormatter(formatter)
+        root.addHandler(console_handler)
+
+    logging.info("Logging initialised | debug=%s", debug)
 
 
 def normalize_to_bool(value):
@@ -208,12 +232,6 @@ class TheatreApp(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("X32 Theatre Mic Controller")
-
-        logging.basicConfig(
-            filename="show_log.txt",
-            level=logging.INFO,
-            format="%(asctime)s %(message)s"
-        )
 
         self.settings_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
@@ -696,6 +714,7 @@ class TheatreApp(QWidget):
 
     def start_osc_listener(self):
         dispatcher = Dispatcher()
+        dispatcher.set_default_handler(self.on_unhandled_osc)
         dispatcher.map("/ch/*/mix/on", self.on_channel_status_osc)
 
         try:
@@ -732,8 +751,10 @@ class TheatreApp(QWidget):
         self.start_osc_listener()
 
     def on_channel_status_osc(self, address, *args):
+        logging.debug("OSC RX matched: address=%s args=%s", address, args)
         match = re.match(r"^/ch/(\d{1,2})/mix/on$", str(address))
         if not match or not args:
+            logging.debug("OSC RX ignored (invalid format or empty args): address=%s args=%s", address, args)
             return
 
         try:
@@ -743,11 +764,14 @@ class TheatreApp(QWidget):
             return
 
         enabled = value >= 0.5
+        logging.debug("OSC parsed channel update: channel=%s enabled=%s raw_value=%s", channel, enabled, value)
         self.channel_status_received.emit(channel, enabled)
 
     def handle_channel_status_update(self, channel, enabled):
+        logging.debug("UI handling channel update: channel=%s enabled=%s", channel, enabled)
         actor = next((name for name, ch in self.channel_map.items() if ch == channel), None)
         if actor is None:
+            logging.debug("No actor mapped for channel=%s", channel)
             return
 
         self.current_live_state[actor] = enabled
@@ -760,6 +784,14 @@ class TheatreApp(QWidget):
             self.mismatch_actors.add(actor)
         else:
             self.mismatch_actors.discard(actor)
+
+        logging.debug(
+            "Comparison result: actor=%s expected=%s live=%s mismatch_count=%s",
+            actor,
+            expected,
+            enabled,
+            len(self.mismatch_actors),
+        )
 
         self.draw_current_scene()
         if self.mismatch_actors:
@@ -779,10 +811,14 @@ class TheatreApp(QWidget):
         )
         for actor in self.actors:
             sender.query_channel(actor)
+            logging.debug("OSC query requested for actor=%s channel=%s", actor, self.channel_map.get(actor))
 
         self.status_label.setText(
             f"Requested channel states from mixer | listening on {self.osc_port}"
         )
+
+    def on_unhandled_osc(self, address, *args):
+        logging.debug("OSC RX unhandled: address=%s args=%s", address, args)
 
     def closeEvent(self, event):
         self.stop_osc_listener()
@@ -791,7 +827,13 @@ class TheatreApp(QWidget):
 
 
 def main():
-    app = QApplication(sys.argv)
+    parser = argparse.ArgumentParser(description="X32 Theatre Mic Controller")
+    parser.add_argument("--debug", action="store_true", help="Enable verbose OSC/debug logging")
+    args, qt_args = parser.parse_known_args()
+
+    setup_logging(debug=args.debug)
+
+    app = QApplication([sys.argv[0], *qt_args])
     window = TheatreApp()
     window.show()
     sys.exit(app.exec())
