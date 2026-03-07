@@ -286,6 +286,18 @@ class TheatreApp(QWidget):
 
         controls.addStretch()
 
+        self.all_on_btn = QPushButton("ALL ON")
+        self.all_on_btn.setStyleSheet(button_style)
+        self.all_on_btn.clicked.connect(lambda: self.set_all_for_current_scene(True))
+        controls.addWidget(self.all_on_btn)
+        self.control_buttons.append(self.all_on_btn)
+
+        self.all_off_btn = QPushButton("ALL OFF")
+        self.all_off_btn.setStyleSheet(button_style)
+        self.all_off_btn.clicked.connect(lambda: self.set_all_for_current_scene(False))
+        controls.addWidget(self.all_off_btn)
+        self.control_buttons.append(self.all_off_btn)
+
         self.scene_label = QLabel("No Scene")
         self.scene_label.setAlignment(Qt.AlignCenter)
         self.scene_label.setStyleSheet("font-size: 24px; font-weight: bold;")
@@ -531,6 +543,23 @@ class TheatreApp(QWidget):
             if card_actor == actor:
                 card.set_muted(not scene_state[actor])
                 break
+
+        self.set_take_pending(self.has_pending_changes())
+
+    def set_all_for_current_scene(self, enabled):
+        if not self.card_edit_unlocked:
+            return
+
+        scene_state = self.current_scene_state()
+        if scene_state is None:
+            return
+
+        value = bool(enabled)
+        for actor in scene_state:
+            scene_state[actor] = value
+
+        for actor, card in zip(self.actors, self.cards):
+            card.set_muted(not scene_state.get(actor, False))
 
         self.set_take_pending(self.has_pending_changes())
 
