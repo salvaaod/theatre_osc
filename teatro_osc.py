@@ -31,7 +31,6 @@ from PySide6.QtWidgets import (
 DEFAULT_OSC_IP = "192.168.10.59"
 DEFAULT_OSC_PORT = 10023
 DEFAULT_OSC_LISTEN_IP = "0.0.0.0"
-DEFAULT_OSC_LISTEN_PORT = 10024
 DEFAULT_ADDRESS_TEMPLATE = "/ch/{ch:02d}/mix/on"
 DEFAULT_OSC_VALUE_FOR_ON = 1
 DEFAULT_OSC_VALUE_FOR_OFF = 0
@@ -513,7 +512,8 @@ class TheatreApp(QWidget):
         if not ok:
             return
         self.osc_port = int(value)
-        self.status_label.setText(f"OSC target: {self.osc_ip}:{self.osc_port}")
+        self.restart_osc_listener()
+        self.status_label.setText(f"OSC target/readback: {self.osc_ip}:{self.osc_port}")
         self.save_settings()
 
     def adjust_window(self):
@@ -700,11 +700,16 @@ class TheatreApp(QWidget):
 
         try:
             self.osc_listener = ThreadingOSCUDPServer(
-                (DEFAULT_OSC_LISTEN_IP, DEFAULT_OSC_LISTEN_PORT),
+                (DEFAULT_OSC_LISTEN_IP, self.osc_port),
                 dispatcher,
             )
         except OSError as exc:
-            logging.warning("Could not start OSC listener on %s:%s (%s)", DEFAULT_OSC_LISTEN_IP, DEFAULT_OSC_LISTEN_PORT, exc)
+            logging.warning(
+                "Could not start OSC listener on %s:%s (%s)",
+                DEFAULT_OSC_LISTEN_IP,
+                self.osc_port,
+                exc,
+            )
             return
 
         self.osc_listener_thread = threading.Thread(
@@ -712,7 +717,19 @@ class TheatreApp(QWidget):
             daemon=True,
         )
         self.osc_listener_thread.start()
-        logging.info("OSC listener started on %s:%s", DEFAULT_OSC_LISTEN_IP, DEFAULT_OSC_LISTEN_PORT)
+        logging.info("OSC listener started on %s:%s", DEFAULT_OSC_LISTEN_IP, self.osc_port)
+
+    def stop_osc_listener(self):
+        if self.osc_listener is None:
+            return
+        self.osc_listener.shutdown()
+        self.osc_listener.server_close()
+        self.osc_listener = None
+        self.osc_listener_thread = None
+
+    def restart_osc_listener(self):
+        self.stop_osc_listener()
+        self.start_osc_listener()
 
     def on_channel_status_osc(self, address, *args):
         match = re.match(r"^/ch/(\d{1,2})/mix/on$", str(address))
@@ -764,13 +781,11 @@ class TheatreApp(QWidget):
             sender.query_channel(actor)
 
         self.status_label.setText(
-            f"Requested channel states from mixer | listening on {DEFAULT_OSC_LISTEN_PORT}"
+            f"Requested channel states from mixer | listening on {self.osc_port}"
         )
 
     def closeEvent(self, event):
-        if self.osc_listener is not None:
-            self.osc_listener.shutdown()
-            self.osc_listener.server_close()
+        self.stop_osc_listener()
         self.save_settings()
         super().closeEvent(event)
 
