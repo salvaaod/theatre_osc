@@ -251,7 +251,6 @@ class TheatreApp(QWidget):
         self.last_live_state = None
         self.current_live_state = {}
         self.mismatch_actors = set()
-        self.manual_touched_actors = set()
         self.last_excel_path = ""
         self.osc_listener = None
         self.osc_listener_thread = None
@@ -445,7 +444,6 @@ class TheatreApp(QWidget):
             self.last_live_state = None
             self.current_live_state = {}
             self.mismatch_actors.clear()
-            self.manual_touched_actors.clear()
             self.last_excel_path = os.path.abspath(path)
 
             self.rebuild_cards()
@@ -568,7 +566,6 @@ class TheatreApp(QWidget):
         self.draw_current_scene()
         self.card_edit_unlocked = False
         self.clear_bulk_toggle_state()
-        self.manual_touched_actors.clear()
         self.set_take_pending(True)
 
     def next_scene(self):
@@ -578,7 +575,6 @@ class TheatreApp(QWidget):
         self.draw_current_scene()
         self.card_edit_unlocked = False
         self.clear_bulk_toggle_state()
-        self.manual_touched_actors.clear()
         self.set_take_pending(True)
 
     def get_scene_state(self, scene_name):
@@ -614,13 +610,8 @@ class TheatreApp(QWidget):
         if scene_state is None or actor not in scene_state:
             return
 
-        if actor in self.mismatch_actors and actor not in self.manual_touched_actors:
-            base_enabled = bool(self.current_live_state.get(actor, scene_state[actor]))
-        else:
-            base_enabled = bool(scene_state[actor])
-
+        base_enabled = bool(self.current_live_state.get(actor, scene_state[actor]))
         scene_state[actor] = not base_enabled
-        self.manual_touched_actors.add(actor)
         self.refresh_cards_from_scene(scene_state)
 
         self.clear_bulk_toggle_state()
@@ -664,7 +655,6 @@ class TheatreApp(QWidget):
             for actor in scene_state:
                 scene_state[actor] = value
 
-        self.manual_touched_actors.update(scene_state.keys())
         self.refresh_cards_from_scene(scene_state)
 
         self.set_take_pending(self.has_pending_changes())
@@ -727,7 +717,6 @@ class TheatreApp(QWidget):
         self.last_live_state = dict(scene_state)
         self.current_live_state = dict(scene_state)
         self.mismatch_actors.clear()
-        self.manual_touched_actors.clear()
         self.card_edit_unlocked = True
         self.clear_bulk_toggle_state()
         self.set_take_pending(False)
@@ -811,7 +800,6 @@ class TheatreApp(QWidget):
             self.mismatch_actors.add(actor)
         else:
             self.mismatch_actors.discard(actor)
-            self.manual_touched_actors.discard(actor)
 
         logging.debug(
             "Comparison result: actor=%s expected=%s live=%s mismatch_count=%s",
