@@ -487,6 +487,18 @@ class TheatreApp(QWidget):
             self.cards.append(card)
             self.row_layout.addWidget(card)
 
+    def card_enabled_state_for_display(self, actor, expected_enabled):
+        if actor in self.mismatch_actors and actor in self.current_live_state:
+            return bool(self.current_live_state[actor])
+        return bool(expected_enabled)
+
+    def refresh_cards_from_scene(self, scene_state):
+        for actor, card in zip(self.actors, self.cards):
+            card.set_size(self.card_size)
+            expected_enabled = bool(scene_state.get(actor, False))
+            display_enabled = self.card_enabled_state_for_display(actor, expected_enabled)
+            card.set_muted(not display_enabled, actor in self.mismatch_actors)
+
     def draw_current_scene(self):
         if not self.scene_names:
             self.scene_label.setText("No Scene")
@@ -500,10 +512,7 @@ class TheatreApp(QWidget):
             return
         self.scene_label.setText(f"Scene: {scene_name}")
 
-        for actor, card in zip(self.actors, self.cards):
-            card.set_size(self.card_size)
-            enabled = bool(scene_state.get(actor, False))
-            card.set_muted(not enabled, actor in self.mismatch_actors)
+        self.refresh_cards_from_scene(scene_state)
 
         self.adjust_window()
 
@@ -602,10 +611,7 @@ class TheatreApp(QWidget):
             return
 
         scene_state[actor] = not bool(scene_state[actor])
-        for card_actor, card in zip(self.actors, self.cards):
-            if card_actor == actor:
-                card.set_muted(not scene_state[actor], actor in self.mismatch_actors)
-                break
+        self.refresh_cards_from_scene(scene_state)
 
         self.clear_bulk_toggle_state()
         self.set_take_pending(self.has_pending_changes())
@@ -648,8 +654,7 @@ class TheatreApp(QWidget):
             for actor in scene_state:
                 scene_state[actor] = value
 
-        for actor, card in zip(self.actors, self.cards):
-            card.set_muted(not scene_state.get(actor, False), actor in self.mismatch_actors)
+        self.refresh_cards_from_scene(scene_state)
 
         self.set_take_pending(self.has_pending_changes())
 
