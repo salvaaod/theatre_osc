@@ -41,6 +41,11 @@ CARD_OFF_COLOR = "#b00020"
 CARD_TEXT_ON_COLOR = "#111111"
 CARD_TEXT_OFF_COLOR = "#ffffff"
 
+BASE_CARD_SIZE = 80
+BASE_CONTROL_BUTTON_WIDTH = 112
+BASE_CONTROL_BUTTON_HEIGHT = 56
+BASE_CONTROL_BUTTON_FONT_SIZE = 14
+
 
 def normalize_to_bool(value):
     if value is None:
@@ -205,6 +210,7 @@ class TheatreApp(QWidget):
         self.osc_ip = DEFAULT_OSC_IP
         self.osc_port = DEFAULT_OSC_PORT
         self.cards = []
+        self.control_buttons = []
 
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(10, 10, 10, 10)
@@ -242,26 +248,25 @@ class TheatreApp(QWidget):
         controls = QHBoxLayout()
         self.main_layout.addLayout(controls)
 
-        button_size = (112, 56)
         button_style = "QPushButton { border: 2px solid #555; border-radius: 4px; }"
 
         self.prev_btn = QPushButton("Previous")
-        self.prev_btn.setFixedSize(*button_size)
         self.prev_btn.setStyleSheet(button_style)
         self.prev_btn.clicked.connect(self.previous_scene)
         controls.addWidget(self.prev_btn)
+        self.control_buttons.append(self.prev_btn)
 
         self.next_btn = QPushButton("Next")
-        self.next_btn.setFixedSize(*button_size)
         self.next_btn.setStyleSheet(button_style)
         self.next_btn.clicked.connect(self.next_scene)
         controls.addWidget(self.next_btn)
+        self.control_buttons.append(self.next_btn)
 
         self.take_btn = QPushButton("Take")
-        self.take_btn.setFixedSize(*button_size)
         self.take_btn.setStyleSheet(button_style)
         self.take_btn.clicked.connect(self.apply_scene)
         controls.addWidget(self.take_btn)
+        self.control_buttons.append(self.take_btn)
 
         controls.addStretch()
 
@@ -282,6 +287,20 @@ class TheatreApp(QWidget):
         QShortcut(QKeySequence(Qt.Key_Right), self, activated=self.next_scene)
         QShortcut(QKeySequence(Qt.Key_Space), self, activated=self.apply_scene)
         QShortcut(QKeySequence(Qt.Key_Return), self, activated=self.apply_scene)
+
+        self.update_control_button_sizes()
+
+    def update_control_button_sizes(self):
+        scale = max(0.5, self.card_size / BASE_CARD_SIZE)
+        button_width = int(round(BASE_CONTROL_BUTTON_WIDTH * scale))
+        button_height = int(round(BASE_CONTROL_BUTTON_HEIGHT * scale))
+        font_size = max(9, int(round(BASE_CONTROL_BUTTON_FONT_SIZE * scale)))
+
+        for button in self.control_buttons:
+            button.setFixedSize(button_width, button_height)
+            font = button.font()
+            font.setPointSize(font_size)
+            button.setFont(font)
 
     def load_settings(self):
         if not os.path.exists(self.settings_path):
@@ -400,6 +419,7 @@ class TheatreApp(QWidget):
 
     def set_card_size(self, size):
         self.card_size = int(size)
+        self.update_control_button_sizes()
         self.draw_current_scene()
         self.save_settings()
 
