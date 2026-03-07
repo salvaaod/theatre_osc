@@ -217,6 +217,7 @@ class TheatreApp(QWidget):
 
         self.build_ui()
         self.load_settings()
+        self.update_control_button_sizes()
         self.try_load_startup_excel()
         self.adjust_window()
 
