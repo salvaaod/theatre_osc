@@ -223,6 +223,9 @@ class TheatreApp(QWidget):
         self.control_buttons = []
         self.pending_take = False
         self.card_edit_unlocked = False
+        self.bulk_toggle_scene_name = ""
+        self.bulk_toggle_target = None
+        self.bulk_toggle_snapshot = None
         self.take_blink_on = False
         self.take_blink_timer = QTimer(self)
         self.take_blink_timer.setInterval(450)
@@ -489,12 +492,18 @@ class TheatreApp(QWidget):
         self.adjustSize()
         self.setFixedSize(self.sizeHint())
 
+    def clear_bulk_toggle_state(self):
+        self.bulk_toggle_scene_name = ""
+        self.bulk_toggle_target = None
+        self.bulk_toggle_snapshot = None
+
     def previous_scene(self):
         if not self.scene_names:
             return
         self.current_scene_index = (self.current_scene_index - 1) % len(self.scene_names)
         self.draw_current_scene()
         self.card_edit_unlocked = False
+        self.clear_bulk_toggle_state()
         self.set_take_pending(True)
 
     def next_scene(self):
@@ -503,6 +512,7 @@ class TheatreApp(QWidget):
         self.current_scene_index = (self.current_scene_index + 1) % len(self.scene_names)
         self.draw_current_scene()
         self.card_edit_unlocked = False
+        self.clear_bulk_toggle_state()
         self.set_take_pending(True)
 
     def get_scene_state(self, scene_name):
@@ -544,19 +554,38 @@ class TheatreApp(QWidget):
                 card.set_muted(not scene_state[actor])
                 break
 
+        self.clear_bulk_toggle_state()
         self.set_take_pending(self.has_pending_changes())
 
     def set_all_for_current_scene(self, enabled):
         if not self.card_edit_unlocked:
             return
 
-        scene_state = self.current_scene_state()
+        if not self.scene_names:
+            return
+
+        scene_name = self.scene_names[self.current_scene_index]
+        scene_state = self.get_scene_state(scene_name)
         if scene_state is None:
             return
 
         value = bool(enabled)
-        for actor in scene_state:
-            scene_state[actor] = value
+        is_repeat_cancel = (
+            self.bulk_toggle_snapshot is not None
+            and self.bulk_toggle_scene_name == scene_name
+            and self.bulk_toggle_target == value
+        )
+
+        if is_repeat_cancel:
+            scene_state.clear()
+            scene_state.update(self.bulk_toggle_snapshot)
+            self.clear_bulk_toggle_state()
+        else:
+            self.bulk_toggle_scene_name = scene_name
+            self.bulk_toggle_target = value
+            self.bulk_toggle_snapshot = dict(scene_state)
+            for actor in scene_state:
+                scene_state[actor] = value
 
         for actor, card in zip(self.actors, self.cards):
             card.set_muted(not scene_state.get(actor, False))
@@ -620,6 +649,7 @@ class TheatreApp(QWidget):
 
         self.last_live_state = dict(scene_state)
         self.card_edit_unlocked = True
+        self.clear_bulk_toggle_state()
         self.set_take_pending(False)
         logging.info("TAKE scene: %s | Changes: %d", scene_name, changes)
         self.status_label.setText(
