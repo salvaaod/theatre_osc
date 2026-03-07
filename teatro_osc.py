@@ -594,13 +594,26 @@ class TheatreApp(QWidget):
         scene_name = self.scene_names[self.current_scene_index]
         return self.get_scene_state(scene_name)
 
+    def live_reference_state(self, scene_state):
+        reference = {}
+        for actor in scene_state:
+            if actor in self.current_live_state:
+                reference[actor] = bool(self.current_live_state[actor])
+            elif self.last_live_state is not None:
+                reference[actor] = bool(self.last_live_state.get(actor, scene_state[actor]))
+            else:
+                reference[actor] = bool(scene_state[actor])
+        return reference
+
     def has_pending_changes(self):
         scene_state = self.current_scene_state()
         if scene_state is None:
             return False
-        if self.last_live_state is None:
+        if self.last_live_state is None and not self.current_live_state:
             return True
-        return any(self.last_live_state.get(actor) != enabled for actor, enabled in scene_state.items())
+
+        reference = self.live_reference_state(scene_state)
+        return any(reference.get(actor) != bool(enabled) for actor, enabled in scene_state.items())
 
     def toggle_actor_for_current_scene(self, actor):
         if not self.card_edit_unlocked:
@@ -704,15 +717,11 @@ class TheatreApp(QWidget):
         )
 
         changes = 0
-        if self.last_live_state is None:
-            for actor, enabled in scene_state.items():
+        reference = self.live_reference_state(scene_state)
+        for actor, enabled in scene_state.items():
+            if reference.get(actor) != bool(enabled):
                 sender.send(actor, enabled)
                 changes += 1
-        else:
-            for actor, enabled in scene_state.items():
-                if self.last_live_state.get(actor) != enabled:
-                    sender.send(actor, enabled)
-                    changes += 1
 
         self.last_live_state = dict(scene_state)
         self.current_live_state = dict(scene_state)
@@ -791,6 +800,9 @@ class TheatreApp(QWidget):
             return
 
         self.current_live_state[actor] = enabled
+        if self.last_live_state is None:
+            self.last_live_state = {}
+        self.last_live_state[actor] = bool(enabled)
         scene_state = self.current_scene_state()
         if scene_state is None:
             return
