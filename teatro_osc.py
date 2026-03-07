@@ -35,7 +35,7 @@ FALSY = {"NO", "N", "FALSE", "F", "0", "OFF", ""}
 APP_SETTINGS_FILE = "theatre_settings.json"
 
 CARD_SPACING = 6
-CARD_BORDER_WIDTH = 2
+CARD_BORDER_WIDTH = 4
 CARD_ON_COLOR = "#f0f0f0"
 CARD_OFF_COLOR = "#b00020"
 CARD_TEXT_ON_COLOR = "#111111"
@@ -242,18 +242,20 @@ class TheatreApp(QWidget):
         controls = QHBoxLayout()
         self.main_layout.addLayout(controls)
 
+        button_size = (140, 56)
+
         self.prev_btn = QPushButton("Previous")
-        self.prev_btn.setFixedHeight(56)
+        self.prev_btn.setFixedSize(*button_size)
         self.prev_btn.clicked.connect(self.previous_scene)
         controls.addWidget(self.prev_btn)
 
         self.next_btn = QPushButton("Next")
-        self.next_btn.setFixedSize(160, 56)
+        self.next_btn.setFixedSize(*button_size)
         self.next_btn.clicked.connect(self.next_scene)
         controls.addWidget(self.next_btn)
 
         self.take_btn = QPushButton("Take")
-        self.take_btn.setFixedHeight(56)
+        self.take_btn.setFixedSize(*button_size)
         self.take_btn.clicked.connect(self.apply_scene)
         controls.addWidget(self.take_btn)
 
