@@ -7,7 +7,7 @@ import sys
 
 import pandas as pd
 from pythonosc.udp_client import SimpleUDPClient
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -211,6 +211,11 @@ class TheatreApp(QWidget):
         self.osc_port = DEFAULT_OSC_PORT
         self.cards = []
         self.control_buttons = []
+        self.pending_take = False
+        self.take_blink_on = False
+        self.take_blink_timer = QTimer(self)
+        self.take_blink_timer.setInterval(450)
+        self.take_blink_timer.timeout.connect(self.toggle_take_blink)
 
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(10, 10, 10, 10)
@@ -264,7 +269,6 @@ class TheatreApp(QWidget):
         self.control_buttons.append(self.next_btn)
 
         self.take_btn = QPushButton("Take")
-        self.take_btn.setStyleSheet(button_style)
         self.take_btn.clicked.connect(self.apply_scene)
         controls.addWidget(self.take_btn)
         self.control_buttons.append(self.take_btn)
@@ -290,6 +294,7 @@ class TheatreApp(QWidget):
         QShortcut(QKeySequence(Qt.Key_Return), self, activated=self.apply_scene)
 
         self.update_control_button_sizes()
+        self.update_take_button_style()
 
     def update_control_button_sizes(self):
         scale = max(0.5, self.card_size / BASE_CARD_SIZE)
@@ -364,6 +369,7 @@ class TheatreApp(QWidget):
 
             self.rebuild_cards()
             self.draw_current_scene()
+            self.set_take_pending(True)
             self.status_label.setText(
                 f"Loaded Excel: {os.path.basename(path)} | OSC {self.osc_ip}:{self.osc_port}"
             )
@@ -459,12 +465,42 @@ class TheatreApp(QWidget):
             return
         self.current_scene_index = (self.current_scene_index - 1) % len(self.scene_names)
         self.draw_current_scene()
+        self.set_take_pending(True)
 
     def next_scene(self):
         if not self.scene_names:
             return
         self.current_scene_index = (self.current_scene_index + 1) % len(self.scene_names)
         self.draw_current_scene()
+        self.set_take_pending(True)
+
+    def toggle_take_blink(self):
+        self.take_blink_on = not self.take_blink_on
+        self.update_take_button_style()
+
+    def set_take_pending(self, pending):
+        self.pending_take = bool(pending)
+        if self.pending_take:
+            self.take_blink_on = True
+            if not self.take_blink_timer.isActive():
+                self.take_blink_timer.start()
+        else:
+            self.take_blink_timer.stop()
+            self.take_blink_on = False
+        self.update_take_button_style()
+
+    def update_take_button_style(self):
+        border = "2px solid #555"
+        if self.pending_take:
+            background = "#ffd84d" if self.take_blink_on else "#b38f00"
+            text_color = "#111111"
+        else:
+            background = "#2e7d32"
+            text_color = "#ffffff"
+
+        self.take_btn.setStyleSheet(
+            f"QPushButton {{ border: {border}; border-radius: 4px; background: {background}; color: {text_color}; }}"
+        )
 
     def apply_scene(self):
         if not self.scene_names:
@@ -492,6 +528,7 @@ class TheatreApp(QWidget):
                     changes += 1
 
         self.last_live_state = dict(scene_state)
+        self.set_take_pending(False)
         logging.info("TAKE scene: %s | Changes: %d", scene_name, changes)
         self.status_label.setText(
             f"TAKE sent: {scene_name} | Changes: {changes} | OSC {self.osc_ip}:{self.osc_port}"
