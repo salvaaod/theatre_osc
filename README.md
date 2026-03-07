@@ -4,10 +4,11 @@ Desktop controller for theatre microphone cues on an X32 console using OSC and a
 
 ## What changed
 
-- Mic cards now resize to better fit the available horizontal space.
-- The settings file is now named `theatre_settings.json`.
-- The app now saves the path of the last Excel file loaded.
-- On startup, the app tries to auto-load the last Excel file if it still exists.
+- The GUI now uses a Qt (`PySide6`) card-based layout (no Tkinter canvas drawing).
+- Window size auto-fits the cards and is fixed (not user-resizable).
+- Active channels are shown with neutral cards; muted channels are red.
+- Scene controls are `Previous`, `Next`, and `Take` (`Take` sends OSC changes).
+- Card size and OSC IP/port are configurable from the Settings menu.
 
 ## Excel format
 
@@ -20,6 +21,12 @@ Desktop controller for theatre microphone cues on an X32 console using OSC and a
 ```bash
 python3 teatro_osc.py
 ```
+
+## Dependencies
+
+- `PySide6`
+- `pandas`
+- `python-osc`
 
 ## Notes
 
