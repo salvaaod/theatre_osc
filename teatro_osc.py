@@ -570,11 +570,19 @@ class TheatreApp(QWidget):
             return
 
         value = bool(enabled)
-        is_repeat_cancel = (
+        has_active_bulk_toggle = (
             self.bulk_toggle_snapshot is not None
             and self.bulk_toggle_scene_name == scene_name
-            and self.bulk_toggle_target == value
         )
+        is_repeat_cancel = has_active_bulk_toggle and self.bulk_toggle_target == value
+        is_opposite_while_pending = has_active_bulk_toggle and self.bulk_toggle_target != value
+
+        if is_opposite_while_pending:
+            active_label = "ALL ON" if self.bulk_toggle_target else "ALL OFF"
+            self.status_label.setText(
+                f"{active_label} pending: press TAKE to apply or press {active_label} again to cancel"
+            )
+            return
 
         if is_repeat_cancel:
             scene_state.clear()
