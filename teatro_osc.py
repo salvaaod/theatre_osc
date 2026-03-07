@@ -207,8 +207,9 @@ class TheatreApp(QWidget):
 
         self.df = None
         self.scenes = {}
-        self.runtime_scenes = {}
         self.scene_names = []
+        self.scene_override = None
+        self.scene_override_name = ""
         self.actors = []
         self.channel_map = {}
         self.current_scene_index = 0
@@ -370,8 +371,9 @@ class TheatreApp(QWidget):
 
             self.df = df
             self.scenes = scenes
-            self.runtime_scenes = {name: dict(state) for name, state in scenes.items()}
             self.scene_names = list(scenes.keys())
+            self.scene_override = None
+            self.scene_override_name = ""
             self.actors = list(df.columns)
             self.channel_map = build_channel_map(self.actors)
             self.current_scene_index = 0
@@ -492,7 +494,15 @@ class TheatreApp(QWidget):
         self.set_take_pending(True)
 
     def get_scene_state(self, scene_name):
-        return self.runtime_scenes.get(scene_name)
+        base_state = self.scenes.get(scene_name)
+        if base_state is None:
+            return None
+
+        if self.scene_override_name != scene_name or self.scene_override is None:
+            self.scene_override_name = scene_name
+            self.scene_override = dict(base_state)
+
+        return self.scene_override
 
     def current_scene_state(self):
         if not self.scene_names:
