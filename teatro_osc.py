@@ -10,6 +10,7 @@ import threading
 
 import pandas as pd
 from pythonosc.dispatcher import Dispatcher
+from pythonosc.osc_message_builder import OscMessageBuilder
 from pythonosc.osc_server import ThreadingOSCUDPServer
 from pythonosc.udp_client import SimpleUDPClient
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -799,22 +800,50 @@ class TheatreApp(QWidget):
                 "Channel mismatch detected (yellow border): mixer status differs from current scene"
             )
 
+    def send_query_from_listener_socket(self, address):
+        if self.osc_listener is None:
+            logging.warning("OSC listener not running, cannot query: %s", address)
+            return False
+
+        try:
+            builder = OscMessageBuilder(address=address)
+            message = builder.build()
+            self.osc_listener.socket.sendto(message.dgram, (self.osc_ip, self.osc_port))
+            logging.info("OSC query (listener socket): %s", address)
+            logging.debug(
+                "OSC query datagram sent via listener socket | local=%s:%s remote=%s:%s bytes=%s",
+                DEFAULT_OSC_LISTEN_IP,
+                self.osc_port,
+                self.osc_ip,
+                self.osc_port,
+                len(message.dgram),
+            )
+            return True
+        except OSError as exc:
+            logging.warning("OSC query send failed for %s (%s)", address, exc)
+            return False
+
     def read_channels_from_mixer(self):
         if not self.actors:
             return
 
-        sender = X32Sender(
-            self.osc_ip,
-            self.osc_port,
-            DEFAULT_ADDRESS_TEMPLATE,
-            self.channel_map,
-        )
+        if self.osc_listener is None:
+            self.status_label.setText("OSC listener is not active; cannot request channel states")
+            logging.warning("Read Channels requested but listener is not active")
+            return
+
+        sent = 0
         for actor in self.actors:
-            sender.query_channel(actor)
-            logging.debug("OSC query requested for actor=%s channel=%s", actor, self.channel_map.get(actor))
+            ch = self.channel_map.get(actor)
+            if ch is None:
+                continue
+            address = DEFAULT_ADDRESS_TEMPLATE.format(ch=ch)
+            if self.send_query_from_listener_socket(address):
+                sent += 1
+                logging.debug("OSC query requested for actor=%s channel=%s", actor, ch)
 
         self.status_label.setText(
-            f"Requested channel states from mixer | listening on {self.osc_port}"
+            f"Requested channel states from mixer ({sent}) | listening on UDP {self.osc_port}"
         )
 
     def on_unhandled_osc(self, address, *args):
