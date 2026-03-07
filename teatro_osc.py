@@ -207,6 +207,7 @@ class TheatreApp(QWidget):
 
         self.df = None
         self.scenes = {}
+        self.runtime_scenes = {}
         self.scene_names = []
         self.actors = []
         self.channel_map = {}
@@ -369,6 +370,7 @@ class TheatreApp(QWidget):
 
             self.df = df
             self.scenes = scenes
+            self.runtime_scenes = {name: dict(state) for name, state in scenes.items()}
             self.scene_names = list(scenes.keys())
             self.actors = list(df.columns)
             self.channel_map = build_channel_map(self.actors)
@@ -424,7 +426,10 @@ class TheatreApp(QWidget):
             return
 
         scene_name = self.scene_names[self.current_scene_index]
-        scene_state = self.scenes[scene_name]
+        scene_state = self.get_scene_state(scene_name)
+        if scene_state is None:
+            self.scene_label.setText("No Scene")
+            return
         self.scene_label.setText(f"Scene: {scene_name}")
 
         for actor, card in zip(self.actors, self.cards):
@@ -486,11 +491,14 @@ class TheatreApp(QWidget):
         self.card_edit_unlocked = False
         self.set_take_pending(True)
 
+    def get_scene_state(self, scene_name):
+        return self.runtime_scenes.get(scene_name)
+
     def current_scene_state(self):
         if not self.scene_names:
             return None
         scene_name = self.scene_names[self.current_scene_index]
-        return self.scenes.get(scene_name)
+        return self.get_scene_state(scene_name)
 
     def has_pending_changes(self):
         scene_state = self.current_scene_state()
@@ -549,7 +557,9 @@ class TheatreApp(QWidget):
             return
 
         scene_name = self.scene_names[self.current_scene_index]
-        scene_state = self.scenes[scene_name]
+        scene_state = self.get_scene_state(scene_name)
+        if scene_state is None:
+            return
 
         sender = X32Sender(
             self.osc_ip,
