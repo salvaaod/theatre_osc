@@ -243,14 +243,17 @@ class TheatreApp(QWidget):
         self.main_layout.addLayout(controls)
 
         self.prev_btn = QPushButton("Previous")
+        self.prev_btn.setFixedHeight(56)
         self.prev_btn.clicked.connect(self.previous_scene)
         controls.addWidget(self.prev_btn)
 
         self.next_btn = QPushButton("Next")
+        self.next_btn.setFixedSize(160, 56)
         self.next_btn.clicked.connect(self.next_scene)
         controls.addWidget(self.next_btn)
 
         self.take_btn = QPushButton("Take")
+        self.take_btn.setFixedHeight(56)
         self.take_btn.clicked.connect(self.apply_scene)
         controls.addWidget(self.take_btn)
 
