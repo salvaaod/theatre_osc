@@ -7,7 +7,7 @@ import sys
 
 import pandas as pd
 from pythonosc.udp_client import SimpleUDPClient
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -138,8 +138,11 @@ class X32Sender:
 
 
 class Card(QFrame):
+    clicked = Signal(str)
+
     def __init__(self, text, size):
         super().__init__()
+        self.actor = text
         self.raw_text = text
         self.label = QLabel()
         self.label.setAlignment(Qt.AlignCenter)
@@ -151,6 +154,11 @@ class Card(QFrame):
 
         self.set_size(size)
         self.set_muted(True)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self.actor)
+        super().mousePressEvent(event)
 
     def set_size(self, size):
         self.setFixedSize(size, size)
@@ -200,6 +208,8 @@ class TheatreApp(QWidget):
         self.df = None
         self.scenes = {}
         self.scene_names = []
+        self.scene_override = None
+        self.scene_override_name = ""
         self.actors = []
         self.channel_map = {}
         self.current_scene_index = 0
@@ -212,6 +222,7 @@ class TheatreApp(QWidget):
         self.cards = []
         self.control_buttons = []
         self.pending_take = False
+        self.card_edit_unlocked = False
         self.take_blink_on = False
         self.take_blink_timer = QTimer(self)
         self.take_blink_timer.setInterval(450)
@@ -361,6 +372,8 @@ class TheatreApp(QWidget):
             self.df = df
             self.scenes = scenes
             self.scene_names = list(scenes.keys())
+            self.scene_override = None
+            self.scene_override_name = ""
             self.actors = list(df.columns)
             self.channel_map = build_channel_map(self.actors)
             self.current_scene_index = 0
@@ -404,6 +417,7 @@ class TheatreApp(QWidget):
         self.cards = []
         for actor in self.actors:
             card = Card(actor, self.card_size)
+            card.clicked.connect(self.toggle_actor_for_current_scene)
             self.cards.append(card)
             self.row_layout.addWidget(card)
 
@@ -414,7 +428,10 @@ class TheatreApp(QWidget):
             return
 
         scene_name = self.scene_names[self.current_scene_index]
-        scene_state = self.scenes[scene_name]
+        scene_state = self.get_scene_state(scene_name)
+        if scene_state is None:
+            self.scene_label.setText("No Scene")
+            return
         self.scene_label.setText(f"Scene: {scene_name}")
 
         for actor, card in zip(self.actors, self.cards):
@@ -465,6 +482,7 @@ class TheatreApp(QWidget):
             return
         self.current_scene_index = (self.current_scene_index - 1) % len(self.scene_names)
         self.draw_current_scene()
+        self.card_edit_unlocked = False
         self.set_take_pending(True)
 
     def next_scene(self):
@@ -472,7 +490,49 @@ class TheatreApp(QWidget):
             return
         self.current_scene_index = (self.current_scene_index + 1) % len(self.scene_names)
         self.draw_current_scene()
+        self.card_edit_unlocked = False
         self.set_take_pending(True)
+
+    def get_scene_state(self, scene_name):
+        base_state = self.scenes.get(scene_name)
+        if base_state is None:
+            return None
+
+        if self.scene_override_name != scene_name or self.scene_override is None:
+            self.scene_override_name = scene_name
+            self.scene_override = dict(base_state)
+
+        return self.scene_override
+
+    def current_scene_state(self):
+        if not self.scene_names:
+            return None
+        scene_name = self.scene_names[self.current_scene_index]
+        return self.get_scene_state(scene_name)
+
+    def has_pending_changes(self):
+        scene_state = self.current_scene_state()
+        if scene_state is None:
+            return False
+        if self.last_live_state is None:
+            return True
+        return any(self.last_live_state.get(actor) != enabled for actor, enabled in scene_state.items())
+
+    def toggle_actor_for_current_scene(self, actor):
+        if not self.card_edit_unlocked:
+            return
+
+        scene_state = self.current_scene_state()
+        if scene_state is None or actor not in scene_state:
+            return
+
+        scene_state[actor] = not bool(scene_state[actor])
+        for card_actor, card in zip(self.actors, self.cards):
+            if card_actor == actor:
+                card.set_muted(not scene_state[actor])
+                break
+
+        self.set_take_pending(self.has_pending_changes())
 
     def toggle_take_blink(self):
         self.take_blink_on = not self.take_blink_on
@@ -507,7 +567,9 @@ class TheatreApp(QWidget):
             return
 
         scene_name = self.scene_names[self.current_scene_index]
-        scene_state = self.scenes[scene_name]
+        scene_state = self.get_scene_state(scene_name)
+        if scene_state is None:
+            return
 
         sender = X32Sender(
             self.osc_ip,
@@ -528,6 +590,7 @@ class TheatreApp(QWidget):
                     changes += 1
 
         self.last_live_state = dict(scene_state)
+        self.card_edit_unlocked = True
         self.set_take_pending(False)
         logging.info("TAKE scene: %s | Changes: %d", scene_name, changes)
         self.status_label.setText(
