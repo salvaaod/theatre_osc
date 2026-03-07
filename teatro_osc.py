@@ -242,7 +242,7 @@ class TheatreApp(QWidget):
         controls = QHBoxLayout()
         self.main_layout.addLayout(controls)
 
-        button_size = (140, 56)
+        button_size = (112, 56)
         button_style = "QPushButton { border: 2px solid #555; border-radius: 4px; }"
 
         self.prev_btn = QPushButton("Previous")
