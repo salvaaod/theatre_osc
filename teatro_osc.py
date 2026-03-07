@@ -53,6 +53,7 @@ BASE_CARD_SIZE = 80
 BASE_CONTROL_BUTTON_WIDTH = 112
 BASE_CONTROL_BUTTON_HEIGHT = 56
 BASE_CONTROL_BUTTON_FONT_SIZE = 14
+XREMOTE_KEEPALIVE_INTERVAL_MS = 9000
 
 def setup_logging(debug=False):
     level = logging.DEBUG if debug else logging.INFO
@@ -268,6 +269,10 @@ class TheatreApp(QWidget):
         self.take_blink_timer = QTimer(self)
         self.take_blink_timer.setInterval(450)
         self.take_blink_timer.timeout.connect(self.toggle_take_blink)
+
+        self.xremote_timer = QTimer(self)
+        self.xremote_timer.setInterval(XREMOTE_KEEPALIVE_INTERVAL_MS)
+        self.xremote_timer.timeout.connect(self.send_xremote_keepalive)
 
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(10, 10, 10, 10)
@@ -516,6 +521,7 @@ class TheatreApp(QWidget):
         if not value:
             return
         self.osc_ip = value
+        self.send_xremote_keepalive()
         self.status_label.setText(f"OSC target: {self.osc_ip}:{self.osc_port}")
         self.save_settings()
 
@@ -738,8 +744,11 @@ class TheatreApp(QWidget):
         )
         self.osc_listener_thread.start()
         logging.info("OSC listener started on %s:%s", DEFAULT_OSC_LISTEN_IP, self.osc_port)
+        self.xremote_timer.start()
+        self.send_xremote_keepalive()
 
     def stop_osc_listener(self):
+        self.xremote_timer.stop()
         if self.osc_listener is None:
             return
         self.osc_listener.shutdown()
@@ -800,18 +809,21 @@ class TheatreApp(QWidget):
                 "Channel mismatch detected (yellow border): mixer status differs from current scene"
             )
 
-    def send_query_from_listener_socket(self, address):
+    def send_from_listener_socket(self, address, args=()):
         if self.osc_listener is None:
-            logging.warning("OSC listener not running, cannot query: %s", address)
+            logging.warning("OSC listener not running, cannot send: %s", address)
             return False
 
         try:
             builder = OscMessageBuilder(address=address)
+            for arg in args:
+                builder.add_arg(arg)
             message = builder.build()
             self.osc_listener.socket.sendto(message.dgram, (self.osc_ip, self.osc_port))
-            logging.info("OSC query (listener socket): %s", address)
             logging.debug(
-                "OSC query datagram sent via listener socket | local=%s:%s remote=%s:%s bytes=%s",
+                "OSC datagram sent via listener socket | address=%s args=%s local=%s:%s remote=%s:%s bytes=%s",
+                address,
+                args,
                 DEFAULT_OSC_LISTEN_IP,
                 self.osc_port,
                 self.osc_ip,
@@ -820,8 +832,18 @@ class TheatreApp(QWidget):
             )
             return True
         except OSError as exc:
-            logging.warning("OSC query send failed for %s (%s)", address, exc)
+            logging.warning("OSC send failed for %s (%s)", address, exc)
             return False
+
+    def send_xremote_keepalive(self):
+        if self.send_from_listener_socket("/xremote"):
+            logging.debug("OSC /xremote keepalive sent")
+
+    def send_query_from_listener_socket(self, address):
+        if self.send_from_listener_socket(address):
+            logging.info("OSC query (listener socket): %s", address)
+            return True
+        return False
 
     def read_channels_from_mixer(self):
         if not self.actors:
