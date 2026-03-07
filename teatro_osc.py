@@ -3,9 +3,13 @@
 import json
 import logging
 import os
+import re
 import sys
+import threading
 
 import pandas as pd
+from pythonosc.dispatcher import Dispatcher
+from pythonosc.osc_server import ThreadingOSCUDPServer
 from pythonosc.udp_client import SimpleUDPClient
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
@@ -26,6 +30,8 @@ from PySide6.QtWidgets import (
 
 DEFAULT_OSC_IP = "192.168.10.59"
 DEFAULT_OSC_PORT = 10023
+DEFAULT_OSC_LISTEN_IP = "0.0.0.0"
+DEFAULT_OSC_LISTEN_PORT = 10024
 DEFAULT_ADDRESS_TEMPLATE = "/ch/{ch:02d}/mix/on"
 DEFAULT_OSC_VALUE_FOR_ON = 1
 DEFAULT_OSC_VALUE_FOR_OFF = 0
@@ -40,6 +46,7 @@ CARD_ON_COLOR = "#f0f0f0"
 CARD_OFF_COLOR = "#b00020"
 CARD_TEXT_ON_COLOR = "#111111"
 CARD_TEXT_OFF_COLOR = "#ffffff"
+CARD_MISMATCH_BORDER_COLOR = "#f4d03f"
 
 BASE_CARD_SIZE = 80
 BASE_CONTROL_BUTTON_WIDTH = 112
@@ -136,6 +143,12 @@ class X32Sender:
         self.client.send_message(address, value)
         logging.info("OSC: %s %s", address, value)
 
+    def query_channel(self, actor):
+        ch = self.actor_channel_map[actor]
+        address = self.address_template.format(ch=ch)
+        self.client.send_message(address, [])
+        logging.info("OSC query: %s", address)
+
 
 class Card(QFrame):
     clicked = Signal(str)
@@ -171,13 +184,14 @@ class Card(QFrame):
         self.label.setFont(font)
         self.label.setMaximumWidth(size - 8)
 
-    def set_muted(self, muted):
+    def set_muted(self, muted, mismatch=False):
         bg = CARD_OFF_COLOR if muted else CARD_ON_COLOR
         text = CARD_TEXT_OFF_COLOR if muted else CARD_TEXT_ON_COLOR
+        border = CARD_MISMATCH_BORDER_COLOR if mismatch else "#555"
         self.setStyleSheet(
             f"""
             QFrame {{
-                border: {CARD_BORDER_WIDTH}px solid #555;
+                border: {CARD_BORDER_WIDTH}px solid {border};
                 border-radius: 4px;
                 background: {bg};
             }}
@@ -190,6 +204,8 @@ class Card(QFrame):
 
 
 class TheatreApp(QWidget):
+    channel_status_received = Signal(int, bool)
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("X32 Theatre Mic Controller")
@@ -214,7 +230,11 @@ class TheatreApp(QWidget):
         self.channel_map = {}
         self.current_scene_index = 0
         self.last_live_state = None
+        self.current_live_state = {}
+        self.mismatch_actors = set()
         self.last_excel_path = ""
+        self.osc_listener = None
+        self.osc_listener_thread = None
 
         self.card_size = 80
         self.osc_ip = DEFAULT_OSC_IP
@@ -235,7 +255,9 @@ class TheatreApp(QWidget):
         self.main_layout.setContentsMargins(10, 10, 10, 10)
 
         self.build_ui()
+        self.channel_status_received.connect(self.handle_channel_status_update)
         self.load_settings()
+        self.start_osc_listener()
         self.update_control_button_sizes()
         self.try_load_startup_excel()
         self.adjust_window()
@@ -264,6 +286,10 @@ class TheatreApp(QWidget):
         port_action = QAction("Set Port", self)
         port_action.triggered.connect(self.set_osc_port)
         osc_menu.addAction(port_action)
+
+        read_action = QAction("Read Channels", self)
+        read_action.triggered.connect(self.read_channels_from_mixer)
+        osc_menu.addAction(read_action)
 
         controls = QHBoxLayout()
         self.main_layout.addLayout(controls)
@@ -393,6 +419,8 @@ class TheatreApp(QWidget):
             self.channel_map = build_channel_map(self.actors)
             self.current_scene_index = 0
             self.last_live_state = None
+            self.current_live_state = {}
+            self.mismatch_actors.clear()
             self.last_excel_path = os.path.abspath(path)
 
             self.rebuild_cards()
@@ -452,7 +480,7 @@ class TheatreApp(QWidget):
         for actor, card in zip(self.actors, self.cards):
             card.set_size(self.card_size)
             enabled = bool(scene_state.get(actor, False))
-            card.set_muted(not enabled)
+            card.set_muted(not enabled, actor in self.mismatch_actors)
 
         self.adjust_window()
 
@@ -551,7 +579,7 @@ class TheatreApp(QWidget):
         scene_state[actor] = not bool(scene_state[actor])
         for card_actor, card in zip(self.actors, self.cards):
             if card_actor == actor:
-                card.set_muted(not scene_state[actor])
+                card.set_muted(not scene_state[actor], actor in self.mismatch_actors)
                 break
 
         self.clear_bulk_toggle_state()
@@ -596,7 +624,7 @@ class TheatreApp(QWidget):
                 scene_state[actor] = value
 
         for actor, card in zip(self.actors, self.cards):
-            card.set_muted(not scene_state.get(actor, False))
+            card.set_muted(not scene_state.get(actor, False), actor in self.mismatch_actors)
 
         self.set_take_pending(self.has_pending_changes())
 
@@ -656,6 +684,8 @@ class TheatreApp(QWidget):
                     changes += 1
 
         self.last_live_state = dict(scene_state)
+        self.current_live_state = dict(scene_state)
+        self.mismatch_actors.clear()
         self.card_edit_unlocked = True
         self.clear_bulk_toggle_state()
         self.set_take_pending(False)
@@ -664,7 +694,83 @@ class TheatreApp(QWidget):
             f"TAKE sent: {scene_name} | Changes: {changes} | OSC {self.osc_ip}:{self.osc_port}"
         )
 
+    def start_osc_listener(self):
+        dispatcher = Dispatcher()
+        dispatcher.map("/ch/*/mix/on", self.on_channel_status_osc)
+
+        try:
+            self.osc_listener = ThreadingOSCUDPServer(
+                (DEFAULT_OSC_LISTEN_IP, DEFAULT_OSC_LISTEN_PORT),
+                dispatcher,
+            )
+        except OSError as exc:
+            logging.warning("Could not start OSC listener on %s:%s (%s)", DEFAULT_OSC_LISTEN_IP, DEFAULT_OSC_LISTEN_PORT, exc)
+            return
+
+        self.osc_listener_thread = threading.Thread(
+            target=self.osc_listener.serve_forever,
+            daemon=True,
+        )
+        self.osc_listener_thread.start()
+        logging.info("OSC listener started on %s:%s", DEFAULT_OSC_LISTEN_IP, DEFAULT_OSC_LISTEN_PORT)
+
+    def on_channel_status_osc(self, address, *args):
+        match = re.match(r"^/ch/(\d{1,2})/mix/on$", str(address))
+        if not match or not args:
+            return
+
+        try:
+            channel = int(match.group(1))
+            value = float(args[0])
+        except (TypeError, ValueError):
+            return
+
+        enabled = value >= 0.5
+        self.channel_status_received.emit(channel, enabled)
+
+    def handle_channel_status_update(self, channel, enabled):
+        actor = next((name for name, ch in self.channel_map.items() if ch == channel), None)
+        if actor is None:
+            return
+
+        self.current_live_state[actor] = enabled
+        scene_state = self.current_scene_state()
+        if scene_state is None:
+            return
+
+        expected = bool(scene_state.get(actor, False))
+        if expected != enabled:
+            self.mismatch_actors.add(actor)
+        else:
+            self.mismatch_actors.discard(actor)
+
+        self.draw_current_scene()
+        if self.mismatch_actors:
+            self.status_label.setText(
+                "Channel mismatch detected (yellow border): mixer status differs from current scene"
+            )
+
+    def read_channels_from_mixer(self):
+        if not self.actors:
+            return
+
+        sender = X32Sender(
+            self.osc_ip,
+            self.osc_port,
+            DEFAULT_ADDRESS_TEMPLATE,
+            self.channel_map,
+        )
+        for actor in self.actors:
+            sender.query_channel(actor)
+
+        self.status_label.setText(
+            f"Requested channel states from mixer | listening on {DEFAULT_OSC_LISTEN_PORT}"
+        )
+
     def closeEvent(self, event):
+        if self.osc_listener is not None:
+            self.osc_listener.shutdown()
+            self.osc_listener.server_close()
         self.save_settings()
         super().closeEvent(event)
 
