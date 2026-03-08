@@ -624,10 +624,16 @@ class TheatreApp(QWidget):
         enabled = bool(enabled)
         self.always_visible = enabled
         self.sync_always_visible_menu_actions()
-        was_visible = self.isVisible()
-        self.setWindowFlag(Qt.WindowStaysOnTopHint, enabled)
-        if was_visible:
-            self.show()
+
+        window_handle = self.windowHandle()
+        if window_handle is not None:
+            window_handle.setFlag(Qt.WindowStaysOnTopHint, enabled)
+        else:
+            was_visible = self.isVisible()
+            self.setWindowFlag(Qt.WindowStaysOnTopHint, enabled)
+            if was_visible:
+                self.show()
+
         if save:
             self.save_settings()
 
