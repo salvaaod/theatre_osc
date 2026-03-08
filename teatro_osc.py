@@ -723,7 +723,11 @@ class TheatreApp(QWidget):
         self.manual_override_actors.update(scene_state.keys())
         self.refresh_cards_from_scene(scene_state)
 
-        self.set_take_pending(self.has_pending_changes())
+        pending = self.has_pending_changes() or (
+            self.bulk_toggle_snapshot is not None
+            and self.bulk_toggle_scene_name == scene_name
+        )
+        self.set_take_pending(pending)
 
     def bulk_toggle_interaction_locked(self):
         return (
