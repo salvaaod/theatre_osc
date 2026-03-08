@@ -310,6 +310,8 @@ class TheatreApp(QWidget):
         self.bulk_toggle_scene_name = ""
         self.bulk_toggle_target = None
         self.bulk_toggle_snapshot = None
+        self.manual_edit_scene_name = ""
+        self.manual_edit_snapshot = None
         self.force_full_send_next_take = True
         self.take_blink_on = False
         self.take_blink_timer = QTimer(self)
@@ -728,6 +730,10 @@ class TheatreApp(QWidget):
         self.bulk_toggle_target = None
         self.bulk_toggle_snapshot = None
 
+    def clear_manual_edit_state(self):
+        self.manual_edit_scene_name = ""
+        self.manual_edit_snapshot = None
+
     def previous_scene(self):
         if self.bulk_toggle_interaction_locked():
             return
@@ -737,6 +743,7 @@ class TheatreApp(QWidget):
         self.draw_current_scene()
         self.card_edit_unlocked = False
         self.clear_bulk_toggle_state()
+        self.clear_manual_edit_state()
         self.manual_override_actors.clear()
         self.set_take_pending(True)
 
@@ -749,6 +756,7 @@ class TheatreApp(QWidget):
         self.draw_current_scene()
         self.card_edit_unlocked = False
         self.clear_bulk_toggle_state()
+        self.clear_manual_edit_state()
         self.manual_override_actors.clear()
         self.set_take_pending(True)
 
@@ -801,9 +809,29 @@ class TheatreApp(QWidget):
         if scene_state is None or actor not in scene_state:
             return
 
-        base_enabled = bool(self.current_live_state.get(actor, scene_state[actor]))
-        scene_state[actor] = not base_enabled
-        self.manual_override_actors.add(actor)
+        scene_name = self.scene_names[self.current_scene_index]
+        if self.manual_edit_scene_name != scene_name or self.manual_edit_snapshot is None:
+            self.manual_edit_scene_name = scene_name
+            self.manual_edit_snapshot = dict(scene_state)
+
+        scene_state[actor] = not bool(scene_state[actor])
+        expected_original = bool(self.manual_edit_snapshot.get(actor, False))
+        actor_is_reverted = bool(scene_state[actor]) == expected_original
+
+        if actor_is_reverted:
+            scene_state.clear()
+            scene_state.update(self.manual_edit_snapshot)
+            self.clear_manual_edit_state()
+            self.manual_override_actors.clear()
+            self.clear_bulk_toggle_state()
+            self.refresh_cards_from_scene(scene_state)
+            self.set_take_pending(False)
+            return
+
+        self.manual_override_actors = {
+            name for name, enabled in scene_state.items()
+            if bool(enabled) != bool(self.manual_edit_snapshot.get(name, False))
+        }
         self.refresh_cards_from_scene(scene_state)
 
         had_bulk_toggle = self.bulk_toggle_snapshot is not None
@@ -940,6 +968,7 @@ class TheatreApp(QWidget):
         self.current_live_state = dict(scene_state)
         self.mismatch_actors.clear()
         self.manual_override_actors.clear()
+        self.clear_manual_edit_state()
         self.card_edit_unlocked = True
         self.clear_bulk_toggle_state()
         self.set_take_pending(False)
