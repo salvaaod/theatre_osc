@@ -168,40 +168,27 @@ def split_first_space(text):
 
 
 def find_startup_excel(base_dir, remembered_path):
-    # Prefer an explicitly remembered path; otherwise choose the newest Excel file nearby.
-    candidates = []
-
-    if remembered_path:
-        remembered_path = remembered_path.strip()
-        if remembered_path:
-            if os.path.isabs(remembered_path):
-                candidates.append(remembered_path)
-            else:
-                candidates.append(os.path.join(base_dir, remembered_path))
-                candidates.append(os.path.join(os.getcwd(), remembered_path))
-
-    for scan_dir in [base_dir, os.getcwd()]:
-        if not os.path.isdir(scan_dir):
-            continue
-        for name in os.listdir(scan_dir):
-            if name.lower().endswith((".xlsx", ".xls")):
-                candidates.append(os.path.join(scan_dir, name))
-
-    existing = []
-    seen = set()
-    for path in candidates:
-        abs_path = os.path.abspath(path)
-        if abs_path in seen:
-            continue
-        seen.add(abs_path)
-        if os.path.isfile(abs_path):
-            existing.append(abs_path)
-
-    if not existing:
+    # Only use the explicitly remembered path; do not auto-scan directories.
+    if not remembered_path:
         return None
 
-    existing.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-    return existing[0]
+    remembered_path = remembered_path.strip()
+    if not remembered_path:
+        return None
+
+    candidates = []
+    if os.path.isabs(remembered_path):
+        candidates.append(remembered_path)
+    else:
+        candidates.append(os.path.join(base_dir, remembered_path))
+        candidates.append(os.path.join(os.getcwd(), remembered_path))
+
+    for path in candidates:
+        abs_path = os.path.abspath(path)
+        if os.path.isfile(abs_path) and abs_path.lower().endswith((".xlsx", ".xls")):
+            return abs_path
+
+    return None
 
 
 class X32Sender:
