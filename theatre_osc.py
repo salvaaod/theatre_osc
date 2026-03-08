@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 DEFAULT_OSC_IP = "192.168.10.59"
 DEFAULT_OSC_PORT = 10023
 DEFAULT_OSC_LISTEN_IP = "0.0.0.0"
+LOCAL_LISTEN_PORT_OFFSET = 10
 DEFAULT_ADDRESS_TEMPLATE = "/ch/{ch:02d}/mix/on"
 DEFAULT_OSC_VALUE_FOR_ON = 1
 DEFAULT_OSC_VALUE_FOR_OFF = 0
@@ -55,6 +56,11 @@ BASE_CONTROL_BUTTON_HEIGHT = 56
 BASE_CONTROL_BUTTON_FONT_SIZE = 14
 XREMOTE_KEEPALIVE_INTERVAL_MS = 9000
 APP_WINDOW_TITLE = "OSC Theatre Mic Controller"
+
+
+def derive_listen_port(remote_port):
+    listen_port = int(remote_port) + LOCAL_LISTEN_PORT_OFFSET
+    return ((listen_port - 1) % 65535) + 1
 
 def setup_logging(debug=False):
     level = logging.DEBUG if debug else logging.INFO
@@ -296,6 +302,7 @@ class TheatreApp(QWidget):
         self.card_size = 80
         self.osc_ip = DEFAULT_OSC_IP
         self.osc_port = DEFAULT_OSC_PORT
+        self.osc_listen_port = derive_listen_port(self.osc_port)
         self.cards = []
         self.control_buttons = []
         self.pending_take = False
@@ -505,6 +512,7 @@ class TheatreApp(QWidget):
             self.last_excel_path = str(settings.get("last_excel_path", "")).strip()
             self.osc_ip = str(settings.get("osc_ip", self.osc_ip)).strip() or self.osc_ip
             self.osc_port = int(settings.get("osc_port", self.osc_port))
+            self.osc_listen_port = derive_listen_port(self.osc_port)
             self.always_visible = bool(settings.get("always_visible", self.always_visible))
             window_x = settings.get("window_x")
             window_y = settings.get("window_y")
@@ -523,6 +531,7 @@ class TheatreApp(QWidget):
             "last_excel_path": self.last_excel_path,
             "osc_ip": self.osc_ip,
             "osc_port": self.osc_port,
+            "osc_listen_port": self.osc_listen_port,
             "always_visible": self.always_visible,
             "window_x": int(self.pos().x()),
             "window_y": int(self.pos().y()),
@@ -653,7 +662,9 @@ class TheatreApp(QWidget):
             return
         self.osc_ip = value
         self.send_xremote_keepalive()
-        self.status_label.setText(f"OSC target: {self.osc_ip}:{self.osc_port}")
+        self.status_label.setText(
+            f"OSC target: {self.osc_ip}:{self.osc_port} | Local listen UDP {self.osc_listen_port}"
+        )
         self.update_menu_state()
         self.save_settings()
 
@@ -669,8 +680,11 @@ class TheatreApp(QWidget):
         if not ok:
             return
         self.osc_port = int(value)
+        self.osc_listen_port = derive_listen_port(self.osc_port)
         self.restart_osc_listener()
-        self.status_label.setText(f"OSC target/readback: {self.osc_ip}:{self.osc_port}")
+        self.status_label.setText(
+            f"OSC target: {self.osc_ip}:{self.osc_port} | Local listen UDP {self.osc_listen_port}"
+        )
         self.update_menu_state()
         self.save_settings()
 
@@ -941,14 +955,14 @@ class TheatreApp(QWidget):
 
         try:
             self.osc_listener = ThreadingOSCUDPServer(
-                (DEFAULT_OSC_LISTEN_IP, self.osc_port),
+                (DEFAULT_OSC_LISTEN_IP, self.osc_listen_port),
                 dispatcher,
             )
         except OSError as exc:
             logging.warning(
                 "Could not start OSC listener on %s:%s (%s)",
                 DEFAULT_OSC_LISTEN_IP,
-                self.osc_port,
+                self.osc_listen_port,
                 exc,
             )
             return
@@ -958,7 +972,7 @@ class TheatreApp(QWidget):
             daemon=True,
         )
         self.osc_listener_thread.start()
-        logging.info("OSC listener started on %s:%s", DEFAULT_OSC_LISTEN_IP, self.osc_port)
+        logging.info("OSC listener started on %s:%s", DEFAULT_OSC_LISTEN_IP, self.osc_listen_port)
         self.xremote_timer.start()
         self.send_xremote_keepalive()
 
@@ -1052,7 +1066,7 @@ class TheatreApp(QWidget):
                 address,
                 args,
                 DEFAULT_OSC_LISTEN_IP,
-                self.osc_port,
+                self.osc_listen_port,
                 self.osc_ip,
                 self.osc_port,
                 len(message.dgram),
@@ -1092,7 +1106,7 @@ class TheatreApp(QWidget):
                 logging.debug("OSC query requested for actor=%s channel=%s", actor, ch)
 
         self.status_label.setText(
-            f"Requested channel states from mixer ({sent}) | listening on UDP {self.osc_port}"
+            f"Requested channel states from mixer ({sent}) | listening on UDP {self.osc_listen_port}"
         )
 
     def sanitize_channel_name(self, name):
