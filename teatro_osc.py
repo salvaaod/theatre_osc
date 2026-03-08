@@ -342,7 +342,7 @@ class TheatreApp(QWidget):
         self.controls_layout.addStretch()
 
         self.scene_label = QLabel("No Scene")
-        self.scene_label.setAlignment(Qt.AlignCenter)
+        self.scene_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.scene_label.setStyleSheet("font-size: 20px; font-weight: bold;")
         self.configure_scene_label_width()
         self.controls_layout.addWidget(self.scene_label)
@@ -382,7 +382,7 @@ class TheatreApp(QWidget):
         self.update_take_button_style()
 
     def configure_scene_label_width(self):
-        placeholder = "SCENE : " + ("W" * 20)
+        placeholder = "SCENE: " + ("W" * 20)
         metrics = QFontMetrics(self.scene_label.font())
         width = metrics.horizontalAdvance(placeholder) + 20
         self.scene_label.setFixedWidth(width)
@@ -537,7 +537,7 @@ class TheatreApp(QWidget):
         if scene_state is None:
             self.scene_label.setText("No Scene")
             return
-        self.scene_label.setText(f"SCENE : {scene_name}")
+        self.scene_label.setText(f"SCENE: {scene_name}")
 
         self.refresh_cards_from_scene(scene_state)
 
