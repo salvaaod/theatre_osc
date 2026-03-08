@@ -1,6 +1,17 @@
 # theatre_osc
 
-Desktop controller for theatre microphone cues on an X32 console using OSC and an Excel cue sheet.
+**OSC Theater Mic Controller** is a desktop tool for running theater microphone cues from an Excel cue sheet over OSC.
+It is compatible with digital mixers that follow the same OSC channel naming/address conventions as Behringer/Midas consoles.
+It has been tested with:
+
+- Midas **M32**
+- Behringer **X32**
+- Behringer **XR18/AR18**
+
+Default OSC ports by mixer family:
+
+- **M32 / X32:** `10023`
+- **XR18 / AR18:** `10024`
 
 ## What changed
 
@@ -24,9 +35,16 @@ python3 teatro_osc.py
 
 ## Dependencies
 
+- Python 3.9+ (recommended)
 - `PySide6`
 - `pandas`
 - `python-osc`
+
+Install with pip:
+
+```bash
+python3 -m pip install PySide6 pandas python-osc
+```
 
 ## Notes
 

@@ -80,6 +80,7 @@ def setup_logging(debug=False):
 
 
 def normalize_to_bool(value):
+    # Accept common spreadsheet-style values and normalize to a strict bool.
     if value is None:
         return False
     s = str(value).strip().upper()
@@ -120,6 +121,7 @@ def split_first_space(text):
 
 
 def find_startup_excel(base_dir, remembered_path):
+    # Prefer an explicitly remembered path; otherwise choose the newest Excel file nearby.
     candidates = []
 
     if remembered_path:
@@ -233,7 +235,7 @@ class TheatreApp(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("X32 Theatre Mic Controller")
+        self.setWindowTitle("OSC Theater Mic Controller")
 
         self.settings_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
@@ -728,6 +730,7 @@ class TheatreApp(QWidget):
         return self.get_scene_state(scene_name)
 
     def live_reference_state(self, scene_state):
+        # Compare against the best known live state (fresh readback first, fallback to last TAKE).
         reference = {}
         for actor in scene_state:
             if actor in self.current_live_state:
@@ -864,6 +867,7 @@ class TheatreApp(QWidget):
         )
 
     def apply_scene(self):
+        # Send only diffs by default; force a full send after startup or bulk operations.
         if not self.scene_names:
             return
 
@@ -946,6 +950,7 @@ class TheatreApp(QWidget):
         self.start_osc_listener()
 
     def on_channel_status_osc(self, address, *args):
+        # Parse mixer push updates like /ch/01/mix/on and forward to the UI thread.
         logging.debug("OSC RX matched: address=%s args=%s", address, args)
         match = re.match(r"^/ch/(\d{1,2})/mix/on$", str(address))
         if not match or not args:
@@ -1005,6 +1010,7 @@ class TheatreApp(QWidget):
             )
 
     def send_from_listener_socket(self, address, args=()):
+        # Send from the bound listener socket so replies return to the same UDP source port.
         if self.osc_listener is None:
             logging.warning("OSC listener not running, cannot send: %s", address)
             return False
@@ -1104,7 +1110,7 @@ class TheatreApp(QWidget):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="X32 Theatre Mic Controller")
+    parser = argparse.ArgumentParser(description="OSC Theater Mic Controller")
     parser.add_argument("--debug", action="store_true", help="Enable verbose OSC/debug logging")
     args, qt_args = parser.parse_known_args()
 
