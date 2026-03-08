@@ -266,6 +266,7 @@ class TheatreApp(QWidget):
         self.bulk_toggle_scene_name = ""
         self.bulk_toggle_target = None
         self.bulk_toggle_snapshot = None
+        self.force_full_send_next_take = True
         self.take_blink_on = False
         self.take_blink_timer = QTimer(self)
         self.take_blink_timer.setInterval(450)
@@ -458,6 +459,7 @@ class TheatreApp(QWidget):
             self.current_scene_index = 0
             self.last_live_state = None
             self.current_live_state = {}
+            self.force_full_send_next_take = True
             self.mismatch_actors.clear()
             self.manual_override_actors.clear()
             self.last_excel_path = os.path.abspath(path)
@@ -738,13 +740,19 @@ class TheatreApp(QWidget):
             self.channel_map,
         )
 
+        force_full_send = self.force_full_send_next_take or (
+            self.bulk_toggle_snapshot is not None
+            and self.bulk_toggle_scene_name == scene_name
+        )
+
         changes = 0
         reference = self.live_reference_state(scene_state)
         for actor, enabled in scene_state.items():
-            if reference.get(actor) != bool(enabled):
+            if force_full_send or reference.get(actor) != bool(enabled):
                 sender.send(actor, enabled)
                 changes += 1
 
+        self.force_full_send_next_take = False
         self.last_live_state = dict(scene_state)
         self.current_live_state = dict(scene_state)
         self.mismatch_actors.clear()
