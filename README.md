@@ -13,6 +13,10 @@ Default OSC ports by mixer family:
 - **M32 / X32:** `10023`
 - **XR18 / AR18:** `10024`
 
+When running an emulator on the same machine as this app, the app now avoids UDP bind
+conflicts by using the configured OSC target port for outbound traffic and listening on
+`target_port + 10` for incoming updates (wrapping inside `1..65535` if needed).
+
 ## What changed
 
 - The GUI now uses a Qt (`PySide6`) card-based layout (no Tkinter canvas drawing).
