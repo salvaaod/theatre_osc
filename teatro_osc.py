@@ -319,6 +319,7 @@ class TheatreApp(QWidget):
         self.main_layout.addLayout(controls)
 
         button_style = "QPushButton { border: 2px solid #555; border-radius: 4px; }"
+        all_off_button_style = "QPushButton { border: 2px solid #c00000; border-radius: 4px; }"
 
         self.prev_btn = QPushButton("Previous")
         self.prev_btn.setStyleSheet(button_style)
@@ -337,6 +338,11 @@ class TheatreApp(QWidget):
         controls.addWidget(self.take_btn)
         self.control_buttons.append(self.take_btn)
 
+        self.scene_label = QLabel("No Scene")
+        self.scene_label.setAlignment(Qt.AlignCenter)
+        self.scene_label.setStyleSheet("font-size: 24px; font-weight: bold;")
+        controls.addWidget(self.scene_label)
+
         controls.addStretch()
 
         self.all_on_btn = QPushButton("ALL ON")
@@ -346,15 +352,10 @@ class TheatreApp(QWidget):
         self.control_buttons.append(self.all_on_btn)
 
         self.all_off_btn = QPushButton("ALL OFF")
-        self.all_off_btn.setStyleSheet(button_style)
+        self.all_off_btn.setStyleSheet(all_off_button_style)
         self.all_off_btn.clicked.connect(lambda: self.set_all_for_current_scene(False))
         controls.addWidget(self.all_off_btn)
         self.control_buttons.append(self.all_off_btn)
-
-        self.scene_label = QLabel("No Scene")
-        self.scene_label.setAlignment(Qt.AlignCenter)
-        self.scene_label.setStyleSheet("font-size: 24px; font-weight: bold;")
-        self.main_layout.addWidget(self.scene_label)
 
         self.row_layout = QHBoxLayout()
         self.row_layout.setSpacing(CARD_SPACING)
@@ -514,7 +515,7 @@ class TheatreApp(QWidget):
         if scene_state is None:
             self.scene_label.setText("No Scene")
             return
-        self.scene_label.setText(f"Scene: {scene_name}")
+        self.scene_label.setText(f'Scene {self.current_scene_index + 1}: "{scene_name}"')
 
         self.refresh_cards_from_scene(scene_state)
 
