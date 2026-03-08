@@ -797,6 +797,11 @@ class TheatreApp(QWidget):
             return True
 
         reference = self.live_reference_state(scene_state)
+        if self.manual_override_actors:
+            return any(
+                reference.get(actor) != bool(scene_state.get(actor, False))
+                for actor in self.manual_override_actors
+            )
         return any(reference.get(actor) != bool(enabled) for actor, enabled in scene_state.items())
 
     def toggle_actor_for_current_scene(self, actor):
@@ -956,17 +961,28 @@ class TheatreApp(QWidget):
             and self.bulk_toggle_scene_name == scene_name
         )
 
+        target_actors = list(scene_state.keys())
+        if not force_full_send and self.manual_override_actors:
+            target_actors = [actor for actor in scene_state if actor in self.manual_override_actors]
+
         changes = 0
+        sent_actors = set()
         reference = self.live_reference_state(scene_state)
-        for actor, enabled in scene_state.items():
+        for actor in target_actors:
+            enabled = bool(scene_state[actor])
             if force_full_send or reference.get(actor) != bool(enabled):
                 sender.send(actor, enabled)
                 changes += 1
+                sent_actors.add(actor)
 
         self.force_full_send_next_take = False
-        self.last_live_state = dict(scene_state)
-        self.current_live_state = dict(scene_state)
-        self.mismatch_actors.clear()
+        if self.last_live_state is None:
+            self.last_live_state = {}
+        for actor in sent_actors:
+            value = bool(scene_state[actor])
+            self.current_live_state[actor] = value
+            self.last_live_state[actor] = value
+            self.mismatch_actors.discard(actor)
         self.manual_override_actors.clear()
         self.clear_manual_edit_state()
         self.card_edit_unlocked = True
