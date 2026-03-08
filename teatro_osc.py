@@ -8,7 +8,7 @@ import re
 import sys
 import threading
 
-import pandas as pd
+from openpyxl import load_workbook
 from pythonosc.dispatcher import Dispatcher
 from pythonosc.osc_message_builder import OscMessageBuilder
 from pythonosc.osc_server import ThreadingOSCUDPServer
@@ -54,6 +54,7 @@ BASE_CONTROL_BUTTON_WIDTH = 112
 BASE_CONTROL_BUTTON_HEIGHT = 56
 BASE_CONTROL_BUTTON_FONT_SIZE = 14
 XREMOTE_KEEPALIVE_INTERVAL_MS = 9000
+APP_WINDOW_TITLE = "OSC Theater Mic Controller"
 
 def setup_logging(debug=False):
     level = logging.DEBUG if debug else logging.INFO
@@ -92,21 +93,67 @@ def normalize_to_bool(value):
 
 
 def load_excel_file(path):
-    df = pd.read_excel(path, index_col=0, dtype=str)
-    df = df.fillna("")
-    df.index = df.index.map(lambda x: str(x).strip())
-    df.columns = [str(c).strip() for c in df.columns]
-    return df
+    workbook = load_workbook(path, data_only=True, read_only=True)
+    try:
+        worksheet = workbook.active
+        rows = worksheet.iter_rows(values_only=True)
 
+        header_row = next(rows, None)
+        if not header_row:
+            raise ValueError("Excel has no scenes/actors")
 
-def dataframe_to_scene_dict(df):
-    scenes = {}
-    for scene in df.index:
-        scenes[scene] = {
-            actor: normalize_to_bool(df.loc[scene, actor])
-            for actor in df.columns
+        actor_columns = []
+        actors = []
+        seen_actors = set()
+        for col_index, raw_actor in enumerate(header_row[1:], start=2):
+            actor = str(raw_actor if raw_actor is not None else "").strip()
+            if not actor:
+                raise ValueError(f"Actor header in column {col_index} is blank")
+            if actor in seen_actors:
+                raise ValueError(f"Duplicate actor header: {actor}")
+            seen_actors.add(actor)
+            actor_columns.append(col_index - 1)
+            actors.append(actor)
+
+        if not actors:
+            raise ValueError("Excel has no scenes/actors")
+
+        scene_names = []
+        scenes = {}
+        for row in rows:
+            row_values = tuple(row or ())
+            first_cell = row_values[0] if len(row_values) > 0 else None
+            scene_name = str(first_cell if first_cell is not None else "").strip()
+
+            actor_cells = [
+                row_values[idx] if idx < len(row_values) else None
+                for idx in actor_columns
+            ]
+            row_is_empty = not scene_name and all(
+                str(cell if cell is not None else "").strip() == ""
+                for cell in actor_cells
+            )
+            if row_is_empty:
+                continue
+            if not scene_name:
+                continue
+
+            scenes[scene_name] = {
+                actor: normalize_to_bool(raw_value if raw_value is not None else "")
+                for actor, raw_value in zip(actors, actor_cells)
+            }
+            scene_names.append(scene_name)
+
+        if not scene_names:
+            raise ValueError("Excel has no scene rows")
+
+        return {
+            "scene_names": scene_names,
+            "actors": actors,
+            "scenes": scenes,
         }
-    return scenes
+    finally:
+        workbook.close()
 
 
 def build_channel_map(actors):
@@ -235,14 +282,13 @@ class TheatreApp(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("OSC Theater Mic Controller")
+        self.setWindowTitle(APP_WINDOW_TITLE)
 
         self.settings_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
             APP_SETTINGS_FILE
         )
 
-        self.df = None
         self.scenes = {}
         self.scene_names = []
         self.scene_override = None
@@ -515,20 +561,13 @@ class TheatreApp(QWidget):
             return False
 
         try:
-            df = load_excel_file(path)
-            if df.empty or len(df.columns) == 0:
-                raise ValueError("Excel has no scenes/actors")
+            parsed = load_excel_file(path)
 
-            scenes = dataframe_to_scene_dict(df)
-            if not scenes:
-                raise ValueError("Excel has no scene rows")
-
-            self.df = df
-            self.scenes = scenes
-            self.scene_names = list(scenes.keys())
+            self.scenes = parsed["scenes"]
+            self.scene_names = parsed["scene_names"]
             self.scene_override = None
             self.scene_override_name = ""
-            self.actors = list(df.columns)
+            self.actors = parsed["actors"]
             self.channel_map = build_channel_map(self.actors)
             self.current_scene_index = 0
             self.last_live_state = None
