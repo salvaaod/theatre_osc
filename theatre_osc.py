@@ -54,7 +54,7 @@ BASE_CONTROL_BUTTON_WIDTH = 112
 BASE_CONTROL_BUTTON_HEIGHT = 56
 BASE_CONTROL_BUTTON_FONT_SIZE = 14
 XREMOTE_KEEPALIVE_INTERVAL_MS = 9000
-APP_WINDOW_TITLE = "OSC Theater Mic Controller"
+APP_WINDOW_TITLE = "OSC Theatre Mic Controller"
 
 def setup_logging(debug=False):
     level = logging.DEBUG if debug else logging.INFO
