@@ -338,9 +338,11 @@ class TheatreApp(QWidget):
         controls.addWidget(self.take_btn)
         self.control_buttons.append(self.take_btn)
 
+        controls.addStretch()
+
         self.scene_label = QLabel("No Scene")
         self.scene_label.setAlignment(Qt.AlignCenter)
-        self.scene_label.setStyleSheet("font-size: 24px; font-weight: bold;")
+        self.scene_label.setStyleSheet("font-size: 20px; font-weight: bold;")
         controls.addWidget(self.scene_label)
 
         controls.addStretch()
