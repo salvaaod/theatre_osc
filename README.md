@@ -37,13 +37,13 @@ python3 teatro_osc.py
 
 - Python 3.9+ (recommended)
 - `PySide6`
-- `pandas`
+- `openpyxl`
 - `python-osc`
 
 Install with pip:
 
 ```bash
-python3 -m pip install PySide6 pandas python-osc
+python3 -m pip install PySide6 openpyxl python-osc
 ```
 
 ## Notes
