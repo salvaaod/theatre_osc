@@ -295,9 +295,9 @@ class TheatreApp(QWidget):
         self.main_layout.setMenuBar(self.menu_bar)
 
         file_menu = self.menu_bar.addMenu("File")
-        load_action = QAction("Load Excel", self)
-        load_action.triggered.connect(self.load_excel)
-        file_menu.addAction(load_action)
+        self.load_excel_action = QAction("Load Excel", self)
+        self.load_excel_action.triggered.connect(self.load_excel)
+        file_menu.addAction(self.load_excel_action)
 
         self.always_visible_menu = self.menu_bar.addMenu("Always Visible")
         self.always_visible_group = QActionGroup(self)
@@ -403,10 +403,6 @@ class TheatreApp(QWidget):
         self.status_label.setAlignment(Qt.AlignLeft)
         self.main_layout.addWidget(self.status_label)
 
-        self.current_excel_action = QAction("Excel: none", self)
-        self.current_excel_action.setEnabled(False)
-        file_menu.addSeparator()
-        file_menu.addAction(self.current_excel_action)
 
         QShortcut(QKeySequence(Qt.Key_Left), self, activated=self.previous_scene)
         QShortcut(QKeySequence(Qt.Key_Right), self, activated=self.next_scene)
@@ -430,9 +426,9 @@ class TheatreApp(QWidget):
         if hasattr(self, "port_action"):
             self.port_action.setText(f"Set Port ({self.osc_port})")
 
-        if hasattr(self, "current_excel_action"):
+        if hasattr(self, "load_excel_action"):
             excel_name = os.path.basename(self.last_excel_path) if self.last_excel_path else "none"
-            self.current_excel_action.setText(f"Excel: {excel_name}")
+            self.load_excel_action.setText(f"Load Excel ({excel_name})")
 
     def configure_scene_label_width(self):
         placeholder = "SCENE: " + ("W" * 20)
