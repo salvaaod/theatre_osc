@@ -253,6 +253,7 @@ class TheatreApp(QWidget):
         self.mismatch_actors = set()
         self.manual_override_actors = set()
         self.last_excel_path = ""
+        self.saved_window_position = None
         self.osc_listener = None
         self.osc_listener_thread = None
 
@@ -286,6 +287,7 @@ class TheatreApp(QWidget):
         self.update_control_button_sizes()
         self.try_load_startup_excel()
         self.adjust_window()
+        self.apply_saved_window_position()
 
     def build_ui(self):
         self.menu_bar = QMenuBar()
@@ -417,6 +419,10 @@ class TheatreApp(QWidget):
             self.last_excel_path = str(settings.get("last_excel_path", "")).strip()
             self.osc_ip = str(settings.get("osc_ip", self.osc_ip)).strip() or self.osc_ip
             self.osc_port = int(settings.get("osc_port", self.osc_port))
+            window_x = settings.get("window_x")
+            window_y = settings.get("window_y")
+            if window_x is not None and window_y is not None:
+                self.saved_window_position = (int(window_x), int(window_y))
         except Exception as exc:
             logging.warning("Could not load app settings: %s", exc)
 
@@ -426,6 +432,8 @@ class TheatreApp(QWidget):
             "last_excel_path": self.last_excel_path,
             "osc_ip": self.osc_ip,
             "osc_port": self.osc_port,
+            "window_x": int(self.pos().x()),
+            "window_y": int(self.pos().y()),
         }
         try:
             with open(self.settings_path, "w", encoding="utf-8") as f:
@@ -581,6 +589,12 @@ class TheatreApp(QWidget):
         self.adjustSize()
         self.setFixedSize(self.sizeHint())
 
+    def apply_saved_window_position(self):
+        if self.saved_window_position is None:
+            return
+        x, y = self.saved_window_position
+        self.move(x, y)
+
     def clear_bulk_toggle_state(self):
         self.bulk_toggle_scene_name = ""
         self.bulk_toggle_target = None
@@ -663,8 +677,9 @@ class TheatreApp(QWidget):
         self.manual_override_actors.add(actor)
         self.refresh_cards_from_scene(scene_state)
 
+        had_bulk_toggle = self.bulk_toggle_snapshot is not None
         self.clear_bulk_toggle_state()
-        self.set_take_pending(self.has_pending_changes())
+        self.set_take_pending(self.has_pending_changes() or had_bulk_toggle)
 
     def set_all_for_current_scene(self, enabled):
         if not self.card_edit_unlocked:
@@ -708,7 +723,11 @@ class TheatreApp(QWidget):
         self.manual_override_actors.update(scene_state.keys())
         self.refresh_cards_from_scene(scene_state)
 
-        self.set_take_pending(self.has_pending_changes())
+        pending = self.has_pending_changes() or (
+            self.bulk_toggle_snapshot is not None
+            and self.bulk_toggle_scene_name == scene_name
+        )
+        self.set_take_pending(pending)
 
     def bulk_toggle_interaction_locked(self):
         return (
