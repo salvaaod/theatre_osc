@@ -14,7 +14,7 @@ from pythonosc.osc_message_builder import OscMessageBuilder
 from pythonosc.osc_server import ThreadingOSCUDPServer
 from pythonosc.udp_client import SimpleUDPClient
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QFont, QFontMetrics, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QActionGroup, QFont, QFontMetrics, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -254,6 +254,7 @@ class TheatreApp(QWidget):
         self.manual_override_actors = set()
         self.last_excel_path = ""
         self.saved_window_position = None
+        self.always_visible = False
         self.osc_listener = None
         self.osc_listener_thread = None
 
@@ -297,6 +298,27 @@ class TheatreApp(QWidget):
         load_action = QAction("Load Excel", self)
         load_action.triggered.connect(self.load_excel)
         file_menu.addAction(load_action)
+
+        self.always_visible_menu = self.menu_bar.addMenu("Always Visible")
+        self.always_visible_group = QActionGroup(self)
+        self.always_visible_group.setExclusive(True)
+
+        self.always_visible_on_action = QAction("On", self)
+        self.always_visible_on_action.setCheckable(True)
+        self.always_visible_on_action.triggered.connect(
+            lambda checked=False: self.set_always_visible(True)
+        )
+        self.always_visible_group.addAction(self.always_visible_on_action)
+        self.always_visible_menu.addAction(self.always_visible_on_action)
+
+        self.always_visible_off_action = QAction("Off", self)
+        self.always_visible_off_action.setCheckable(True)
+        self.always_visible_off_action.triggered.connect(
+            lambda checked=False: self.set_always_visible(False)
+        )
+        self.always_visible_group.addAction(self.always_visible_off_action)
+        self.always_visible_menu.addAction(self.always_visible_off_action)
+        self.sync_always_visible_menu_actions()
 
         settings_menu = self.menu_bar.addMenu("Settings")
         size_menu = settings_menu.addMenu("Card Size")
@@ -419,10 +441,14 @@ class TheatreApp(QWidget):
             self.last_excel_path = str(settings.get("last_excel_path", "")).strip()
             self.osc_ip = str(settings.get("osc_ip", self.osc_ip)).strip() or self.osc_ip
             self.osc_port = int(settings.get("osc_port", self.osc_port))
+            self.always_visible = bool(settings.get("always_visible", self.always_visible))
             window_x = settings.get("window_x")
             window_y = settings.get("window_y")
             if window_x is not None and window_y is not None:
                 self.saved_window_position = (int(window_x), int(window_y))
+
+            self.sync_always_visible_menu_actions()
+            self.set_always_visible(self.always_visible, save=False)
         except Exception as exc:
             logging.warning("Could not load app settings: %s", exc)
 
@@ -432,6 +458,7 @@ class TheatreApp(QWidget):
             "last_excel_path": self.last_excel_path,
             "osc_ip": self.osc_ip,
             "osc_port": self.osc_port,
+            "always_visible": self.always_visible,
             "window_x": int(self.pos().x()),
             "window_y": int(self.pos().y()),
         }
@@ -584,6 +611,31 @@ class TheatreApp(QWidget):
         self.restart_osc_listener()
         self.status_label.setText(f"OSC target/readback: {self.osc_ip}:{self.osc_port}")
         self.save_settings()
+
+    def sync_always_visible_menu_actions(self):
+        self.always_visible_on_action.blockSignals(True)
+        self.always_visible_off_action.blockSignals(True)
+        self.always_visible_on_action.setChecked(self.always_visible)
+        self.always_visible_off_action.setChecked(not self.always_visible)
+        self.always_visible_on_action.blockSignals(False)
+        self.always_visible_off_action.blockSignals(False)
+
+    def set_always_visible(self, enabled, save=True):
+        enabled = bool(enabled)
+        self.always_visible = enabled
+        self.sync_always_visible_menu_actions()
+
+        window_handle = self.windowHandle()
+        if window_handle is not None:
+            window_handle.setFlag(Qt.WindowStaysOnTopHint, enabled)
+        else:
+            was_visible = self.isVisible()
+            self.setWindowFlag(Qt.WindowStaysOnTopHint, enabled)
+            if was_visible:
+                self.show()
+
+        if save:
+            self.save_settings()
 
     def adjust_window(self):
         self.adjustSize()
