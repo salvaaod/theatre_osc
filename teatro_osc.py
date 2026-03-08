@@ -315,8 +315,8 @@ class TheatreApp(QWidget):
         read_action.triggered.connect(self.read_channels_from_mixer)
         osc_menu.addAction(read_action)
 
-        controls = QHBoxLayout()
-        self.main_layout.addLayout(controls)
+        self.controls_layout = QHBoxLayout()
+        self.main_layout.addLayout(self.controls_layout)
 
         button_style = "QPushButton { border: 2px solid #555; border-radius: 4px; }"
         all_off_button_style = "QPushButton { border: 2px solid #c00000; border-radius: 4px; }"
@@ -324,40 +324,44 @@ class TheatreApp(QWidget):
         self.prev_btn = QPushButton("Previous")
         self.prev_btn.setStyleSheet(button_style)
         self.prev_btn.clicked.connect(self.previous_scene)
-        controls.addWidget(self.prev_btn)
+        self.controls_layout.addWidget(self.prev_btn)
         self.control_buttons.append(self.prev_btn)
 
         self.next_btn = QPushButton("Next")
         self.next_btn.setStyleSheet(button_style)
         self.next_btn.clicked.connect(self.next_scene)
-        controls.addWidget(self.next_btn)
+        self.controls_layout.addWidget(self.next_btn)
         self.control_buttons.append(self.next_btn)
 
         self.take_btn = QPushButton("Take")
         self.take_btn.clicked.connect(self.apply_scene)
-        controls.addWidget(self.take_btn)
+        self.controls_layout.addWidget(self.take_btn)
         self.control_buttons.append(self.take_btn)
 
-        controls.addStretch()
+        self.controls_layout.addStretch()
 
         self.scene_label = QLabel("No Scene")
         self.scene_label.setAlignment(Qt.AlignCenter)
         self.scene_label.setStyleSheet("font-size: 20px; font-weight: bold;")
-        controls.addWidget(self.scene_label)
+        self.controls_layout.addWidget(self.scene_label)
 
-        controls.addStretch()
+        self.controls_layout.addStretch()
 
         self.all_on_btn = QPushButton("ALL ON")
         self.all_on_btn.setStyleSheet(button_style)
         self.all_on_btn.clicked.connect(lambda: self.set_all_for_current_scene(True))
-        controls.addWidget(self.all_on_btn)
+        self.controls_layout.addWidget(self.all_on_btn)
         self.control_buttons.append(self.all_on_btn)
 
         self.all_off_btn = QPushButton("ALL OFF")
         self.all_off_btn.setStyleSheet(all_off_button_style)
         self.all_off_btn.clicked.connect(lambda: self.set_all_for_current_scene(False))
-        controls.addWidget(self.all_off_btn)
+        self.controls_layout.addWidget(self.all_off_btn)
         self.control_buttons.append(self.all_off_btn)
+
+        self.controls_cards_gap = QWidget()
+        self.controls_cards_gap.setFixedHeight(0)
+        self.main_layout.addWidget(self.controls_cards_gap)
 
         self.row_layout = QHBoxLayout()
         self.row_layout.setSpacing(CARD_SPACING)
@@ -386,6 +390,12 @@ class TheatreApp(QWidget):
             font = button.font()
             font.setPointSize(font_size)
             button.setFont(font)
+
+        self.update_controls_cards_gap()
+
+    def update_controls_cards_gap(self):
+        gap = max(10, int(round(self.card_size * 0.25)))
+        self.controls_cards_gap.setFixedHeight(gap)
 
     def load_settings(self):
         if not os.path.exists(self.settings_path):
