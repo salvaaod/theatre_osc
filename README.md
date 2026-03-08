@@ -30,7 +30,7 @@ Default OSC ports by mixer family:
 ## Run
 
 ```bash
-python3 teatro_osc.py
+python3 theatre_osc.py
 ```
 
 ## Dependencies
@@ -48,5 +48,7 @@ python3 -m pip install PySide6 openpyxl python-osc
 
 ## Notes
 
-- Application/window state is stored in `theatre_settings.json` next to `teatro_osc.py`.
-- If the remembered Excel path is not available anymore, startup continues normally without loading a file.
+- Application/window state is stored in `theatre_settings.json` next to `theatre_osc.py`.
+- On startup, the app only auto-loads the remembered Excel path (`last_excel_path`) when that path still exists and points to a valid `.xlsx`/`.xls` file.
+- The app no longer scans the working directory for arbitrary Excel files at startup.
+- If the remembered file is missing or invalid, startup shows a neutral status (`No startup Excel found`) and waits for manual file selection.
