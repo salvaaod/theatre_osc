@@ -14,7 +14,7 @@ from pythonosc.osc_message_builder import OscMessageBuilder
 from pythonosc.osc_server import ThreadingOSCUDPServer
 from pythonosc.udp_client import SimpleUDPClient
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QFont, QFontMetrics, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QActionGroup, QFont, QFontMetrics, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -299,10 +299,26 @@ class TheatreApp(QWidget):
         load_action.triggered.connect(self.load_excel)
         file_menu.addAction(load_action)
 
-        self.always_visible_action = QAction("Always Visible", self)
-        self.always_visible_action.setCheckable(True)
-        self.always_visible_action.toggled.connect(self.set_always_visible)
-        self.menu_bar.addAction(self.always_visible_action)
+        self.always_visible_menu = self.menu_bar.addMenu("Always Visible")
+        self.always_visible_group = QActionGroup(self)
+        self.always_visible_group.setExclusive(True)
+
+        self.always_visible_on_action = QAction("On", self)
+        self.always_visible_on_action.setCheckable(True)
+        self.always_visible_on_action.triggered.connect(
+            lambda checked=False: self.set_always_visible(True)
+        )
+        self.always_visible_group.addAction(self.always_visible_on_action)
+        self.always_visible_menu.addAction(self.always_visible_on_action)
+
+        self.always_visible_off_action = QAction("Off", self)
+        self.always_visible_off_action.setCheckable(True)
+        self.always_visible_off_action.triggered.connect(
+            lambda checked=False: self.set_always_visible(False)
+        )
+        self.always_visible_group.addAction(self.always_visible_off_action)
+        self.always_visible_menu.addAction(self.always_visible_off_action)
+        self.sync_always_visible_menu_actions()
 
         settings_menu = self.menu_bar.addMenu("Settings")
         size_menu = settings_menu.addMenu("Card Size")
@@ -431,9 +447,7 @@ class TheatreApp(QWidget):
             if window_x is not None and window_y is not None:
                 self.saved_window_position = (int(window_x), int(window_y))
 
-            self.always_visible_action.blockSignals(True)
-            self.always_visible_action.setChecked(self.always_visible)
-            self.always_visible_action.blockSignals(False)
+            self.sync_always_visible_menu_actions()
             self.set_always_visible(self.always_visible, save=False)
         except Exception as exc:
             logging.warning("Could not load app settings: %s", exc)
@@ -598,9 +612,18 @@ class TheatreApp(QWidget):
         self.status_label.setText(f"OSC target/readback: {self.osc_ip}:{self.osc_port}")
         self.save_settings()
 
+    def sync_always_visible_menu_actions(self):
+        self.always_visible_on_action.blockSignals(True)
+        self.always_visible_off_action.blockSignals(True)
+        self.always_visible_on_action.setChecked(self.always_visible)
+        self.always_visible_off_action.setChecked(not self.always_visible)
+        self.always_visible_on_action.blockSignals(False)
+        self.always_visible_off_action.blockSignals(False)
+
     def set_always_visible(self, enabled, save=True):
         enabled = bool(enabled)
         self.always_visible = enabled
+        self.sync_always_visible_menu_actions()
         was_visible = self.isVisible()
         self.setWindowFlag(Qt.WindowStaysOnTopHint, enabled)
         if was_visible:
