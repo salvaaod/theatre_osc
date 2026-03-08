@@ -14,7 +14,7 @@ from pythonosc.osc_message_builder import OscMessageBuilder
 from pythonosc.osc_server import ThreadingOSCUDPServer
 from pythonosc.udp_client import SimpleUDPClient
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QFont, QFontMetrics, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -342,8 +342,9 @@ class TheatreApp(QWidget):
         self.controls_layout.addStretch()
 
         self.scene_label = QLabel("No Scene")
-        self.scene_label.setAlignment(Qt.AlignCenter)
+        self.scene_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.scene_label.setStyleSheet("font-size: 20px; font-weight: bold;")
+        self.configure_scene_label_width()
         self.controls_layout.addWidget(self.scene_label)
 
         self.controls_layout.addStretch()
@@ -379,6 +380,12 @@ class TheatreApp(QWidget):
 
         self.update_control_button_sizes()
         self.update_take_button_style()
+
+    def configure_scene_label_width(self):
+        placeholder = "SCENE: " + ("W" * 20)
+        metrics = QFontMetrics(self.scene_label.font())
+        width = metrics.horizontalAdvance(placeholder) + 20
+        self.scene_label.setFixedWidth(width)
 
     def update_control_button_sizes(self):
         scale = max(0.5, self.card_size / BASE_CARD_SIZE)
@@ -530,7 +537,7 @@ class TheatreApp(QWidget):
         if scene_state is None:
             self.scene_label.setText("No Scene")
             return
-        self.scene_label.setText(f'Scene {self.current_scene_index + 1}: "{scene_name}"')
+        self.scene_label.setText(f"SCENE: {scene_name}")
 
         self.refresh_cards_from_scene(scene_state)
 
@@ -580,6 +587,8 @@ class TheatreApp(QWidget):
         self.bulk_toggle_snapshot = None
 
     def previous_scene(self):
+        if self.bulk_toggle_interaction_locked():
+            return
         if not self.scene_names:
             return
         self.current_scene_index = (self.current_scene_index - 1) % len(self.scene_names)
@@ -590,6 +599,8 @@ class TheatreApp(QWidget):
         self.set_take_pending(True)
 
     def next_scene(self):
+        if self.bulk_toggle_interaction_locked():
+            return
         if not self.scene_names:
             return
         self.current_scene_index = (self.current_scene_index + 1) % len(self.scene_names)
@@ -638,6 +649,8 @@ class TheatreApp(QWidget):
         return any(reference.get(actor) != bool(enabled) for actor, enabled in scene_state.items())
 
     def toggle_actor_for_current_scene(self, actor):
+        if self.bulk_toggle_interaction_locked():
+            return
         if not self.card_edit_unlocked:
             return
 
@@ -684,6 +697,7 @@ class TheatreApp(QWidget):
             scene_state.clear()
             scene_state.update(self.bulk_toggle_snapshot)
             self.clear_bulk_toggle_state()
+            self.apply_bulk_toggle_interaction_lock()
         else:
             self.bulk_toggle_scene_name = scene_name
             self.bulk_toggle_target = value
@@ -695,6 +709,25 @@ class TheatreApp(QWidget):
         self.refresh_cards_from_scene(scene_state)
 
         self.set_take_pending(self.has_pending_changes())
+
+    def bulk_toggle_interaction_locked(self):
+        return (
+            self.pending_take
+            and self.bulk_toggle_snapshot is not None
+            and self.bulk_toggle_scene_name == self.scene_names[self.current_scene_index]
+        ) if self.scene_names else False
+
+    def apply_bulk_toggle_interaction_lock(self):
+        locked = self.bulk_toggle_interaction_locked()
+        allowed_target = self.bulk_toggle_target if locked else None
+
+        self.prev_btn.setEnabled(not locked)
+        self.next_btn.setEnabled(not locked)
+        self.all_on_btn.setEnabled((not locked) or allowed_target is True)
+        self.all_off_btn.setEnabled((not locked) or allowed_target is False)
+
+        for card in self.cards:
+            card.setEnabled(not locked)
 
     def toggle_take_blink(self):
         self.take_blink_on = not self.take_blink_on
@@ -710,6 +743,7 @@ class TheatreApp(QWidget):
             self.take_blink_timer.stop()
             self.take_blink_on = False
         self.update_take_button_style()
+        self.apply_bulk_toggle_interaction_lock()
 
     def update_take_button_style(self):
         border = "2px solid #555"
