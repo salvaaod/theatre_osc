@@ -295,9 +295,9 @@ class TheatreApp(QWidget):
         self.main_layout.setMenuBar(self.menu_bar)
 
         file_menu = self.menu_bar.addMenu("File")
-        load_action = QAction("Load Excel", self)
-        load_action.triggered.connect(self.load_excel)
-        file_menu.addAction(load_action)
+        self.load_excel_action = QAction("Load Excel", self)
+        self.load_excel_action.triggered.connect(self.load_excel)
+        file_menu.addAction(self.load_excel_action)
 
         self.always_visible_menu = self.menu_bar.addMenu("Always Visible")
         self.always_visible_group = QActionGroup(self)
@@ -322,19 +322,25 @@ class TheatreApp(QWidget):
 
         settings_menu = self.menu_bar.addMenu("Settings")
         size_menu = settings_menu.addMenu("Card Size")
+        self.card_size_group = QActionGroup(self)
+        self.card_size_group.setExclusive(True)
+        self.card_size_actions = {}
         for s in [60, 80]:
             action = QAction(f"{s}px", self)
+            action.setCheckable(True)
             action.triggered.connect(lambda checked=False, v=s: self.set_card_size(v))
+            self.card_size_group.addAction(action)
+            self.card_size_actions[s] = action
             size_menu.addAction(action)
 
         osc_menu = settings_menu.addMenu("OSC")
-        ip_action = QAction("Set IP", self)
-        ip_action.triggered.connect(self.set_osc_ip)
-        osc_menu.addAction(ip_action)
+        self.ip_action = QAction("Set IP", self)
+        self.ip_action.triggered.connect(self.set_osc_ip)
+        osc_menu.addAction(self.ip_action)
 
-        port_action = QAction("Set Port", self)
-        port_action.triggered.connect(self.set_osc_port)
-        osc_menu.addAction(port_action)
+        self.port_action = QAction("Set Port", self)
+        self.port_action.triggered.connect(self.set_osc_port)
+        osc_menu.addAction(self.port_action)
 
         read_action = QAction("Read Channels", self)
         read_action.triggered.connect(self.read_channels_from_mixer)
@@ -397,6 +403,7 @@ class TheatreApp(QWidget):
         self.status_label.setAlignment(Qt.AlignLeft)
         self.main_layout.addWidget(self.status_label)
 
+
         QShortcut(QKeySequence(Qt.Key_Left), self, activated=self.previous_scene)
         QShortcut(QKeySequence(Qt.Key_Right), self, activated=self.next_scene)
         QShortcut(QKeySequence(Qt.Key_Space), self, activated=self.apply_scene)
@@ -404,6 +411,24 @@ class TheatreApp(QWidget):
 
         self.update_control_button_sizes()
         self.update_take_button_style()
+        self.update_menu_state()
+
+    def update_menu_state(self):
+        if hasattr(self, "card_size_actions"):
+            for size, action in self.card_size_actions.items():
+                action.blockSignals(True)
+                action.setChecked(size == int(self.card_size))
+                action.blockSignals(False)
+
+        if hasattr(self, "ip_action"):
+            self.ip_action.setText(f"Set IP ({self.osc_ip})")
+
+        if hasattr(self, "port_action"):
+            self.port_action.setText(f"Set Port ({self.osc_port})")
+
+        if hasattr(self, "load_excel_action"):
+            excel_name = os.path.basename(self.last_excel_path) if self.last_excel_path else "none"
+            self.load_excel_action.setText(f"Load Excel ({excel_name})")
 
     def configure_scene_label_width(self):
         placeholder = "SCENE: " + ("W" * 20)
@@ -449,6 +474,7 @@ class TheatreApp(QWidget):
 
             self.sync_always_visible_menu_actions()
             self.set_always_visible(self.always_visible, save=False)
+            self.update_menu_state()
         except Exception as exc:
             logging.warning("Could not load app settings: %s", exc)
 
@@ -512,6 +538,7 @@ class TheatreApp(QWidget):
             self.status_label.setText(
                 f"Loaded Excel: {os.path.basename(path)} | OSC {self.osc_ip}:{self.osc_port}"
             )
+            self.update_menu_state()
             self.save_settings()
             logging.info("Loaded Excel: %s", self.last_excel_path)
             return True
@@ -582,6 +609,7 @@ class TheatreApp(QWidget):
         self.card_size = int(size)
         self.update_control_button_sizes()
         self.draw_current_scene()
+        self.update_menu_state()
         self.save_settings()
 
     def set_osc_ip(self):
@@ -594,6 +622,7 @@ class TheatreApp(QWidget):
         self.osc_ip = value
         self.send_xremote_keepalive()
         self.status_label.setText(f"OSC target: {self.osc_ip}:{self.osc_port}")
+        self.update_menu_state()
         self.save_settings()
 
     def set_osc_port(self):
@@ -610,6 +639,7 @@ class TheatreApp(QWidget):
         self.osc_port = int(value)
         self.restart_osc_listener()
         self.status_label.setText(f"OSC target/readback: {self.osc_ip}:{self.osc_port}")
+        self.update_menu_state()
         self.save_settings()
 
     def sync_always_visible_menu_actions(self):
@@ -959,9 +989,15 @@ class TheatreApp(QWidget):
         )
 
         self.draw_current_scene()
+        has_bulk_pending = (
+            self.bulk_toggle_snapshot is not None
+            and self.bulk_toggle_scene_name == self.scene_names[self.current_scene_index]
+        ) if self.scene_names else False
+        self.set_take_pending(self.has_pending_changes() or has_bulk_pending)
+
         if self.mismatch_actors:
             self.status_label.setText(
-                "Channel mismatch detected (yellow border): mixer status differs from current scene"
+                "External mixer change detected: press TAKE to restore current scene (yellow border marks mismatches)"
             )
 
     def send_from_listener_socket(self, address, args=()):
