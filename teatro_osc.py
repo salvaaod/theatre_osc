@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 
+import argparse
 import json
 import logging
 import os
+import re
 import sys
+import threading
 
 import pandas as pd
+from pythonosc.dispatcher import Dispatcher
+from pythonosc.osc_message_builder import OscMessageBuilder
+from pythonosc.osc_server import ThreadingOSCUDPServer
 from pythonosc.udp_client import SimpleUDPClient
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
@@ -26,6 +32,7 @@ from PySide6.QtWidgets import (
 
 DEFAULT_OSC_IP = "192.168.10.59"
 DEFAULT_OSC_PORT = 10023
+DEFAULT_OSC_LISTEN_IP = "0.0.0.0"
 DEFAULT_ADDRESS_TEMPLATE = "/ch/{ch:02d}/mix/on"
 DEFAULT_OSC_VALUE_FOR_ON = 1
 DEFAULT_OSC_VALUE_FOR_OFF = 0
@@ -40,11 +47,36 @@ CARD_ON_COLOR = "#f0f0f0"
 CARD_OFF_COLOR = "#b00020"
 CARD_TEXT_ON_COLOR = "#111111"
 CARD_TEXT_OFF_COLOR = "#ffffff"
+CARD_MISMATCH_BORDER_COLOR = "#f4d03f"
 
 BASE_CARD_SIZE = 80
 BASE_CONTROL_BUTTON_WIDTH = 112
 BASE_CONTROL_BUTTON_HEIGHT = 56
 BASE_CONTROL_BUTTON_FONT_SIZE = 14
+XREMOTE_KEEPALIVE_INTERVAL_MS = 9000
+
+def setup_logging(debug=False):
+    level = logging.DEBUG if debug else logging.INFO
+    root = logging.getLogger()
+    root.setLevel(level)
+
+    for handler in list(root.handlers):
+        root.removeHandler(handler)
+
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+
+    file_handler = logging.FileHandler("show_log.txt", encoding="utf-8")
+    file_handler.setLevel(level)
+    file_handler.setFormatter(formatter)
+    root.addHandler(file_handler)
+
+    if debug:
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(level)
+        console_handler.setFormatter(formatter)
+        root.addHandler(console_handler)
+
+    logging.info("Logging initialised | debug=%s", debug)
 
 
 def normalize_to_bool(value):
@@ -136,6 +168,12 @@ class X32Sender:
         self.client.send_message(address, value)
         logging.info("OSC: %s %s", address, value)
 
+    def query_channel(self, actor):
+        ch = self.actor_channel_map[actor]
+        address = self.address_template.format(ch=ch)
+        self.client.send_message(address, [])
+        logging.info("OSC query: %s", address)
+
 
 class Card(QFrame):
     clicked = Signal(str)
@@ -171,13 +209,14 @@ class Card(QFrame):
         self.label.setFont(font)
         self.label.setMaximumWidth(size - 8)
 
-    def set_muted(self, muted):
+    def set_muted(self, muted, mismatch=False):
         bg = CARD_OFF_COLOR if muted else CARD_ON_COLOR
         text = CARD_TEXT_OFF_COLOR if muted else CARD_TEXT_ON_COLOR
+        border = CARD_MISMATCH_BORDER_COLOR if mismatch else "#555"
         self.setStyleSheet(
             f"""
             QFrame {{
-                border: {CARD_BORDER_WIDTH}px solid #555;
+                border: {CARD_BORDER_WIDTH}px solid {border};
                 border-radius: 4px;
                 background: {bg};
             }}
@@ -190,15 +229,11 @@ class Card(QFrame):
 
 
 class TheatreApp(QWidget):
+    channel_status_received = Signal(int, bool)
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("X32 Theatre Mic Controller")
-
-        logging.basicConfig(
-            filename="show_log.txt",
-            level=logging.INFO,
-            format="%(asctime)s %(message)s"
-        )
 
         self.settings_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
@@ -214,7 +249,12 @@ class TheatreApp(QWidget):
         self.channel_map = {}
         self.current_scene_index = 0
         self.last_live_state = None
+        self.current_live_state = {}
+        self.mismatch_actors = set()
+        self.manual_override_actors = set()
         self.last_excel_path = ""
+        self.osc_listener = None
+        self.osc_listener_thread = None
 
         self.card_size = 80
         self.osc_ip = DEFAULT_OSC_IP
@@ -231,11 +271,17 @@ class TheatreApp(QWidget):
         self.take_blink_timer.setInterval(450)
         self.take_blink_timer.timeout.connect(self.toggle_take_blink)
 
+        self.xremote_timer = QTimer(self)
+        self.xremote_timer.setInterval(XREMOTE_KEEPALIVE_INTERVAL_MS)
+        self.xremote_timer.timeout.connect(self.send_xremote_keepalive)
+
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(10, 10, 10, 10)
 
         self.build_ui()
+        self.channel_status_received.connect(self.handle_channel_status_update)
         self.load_settings()
+        self.start_osc_listener()
         self.update_control_button_sizes()
         self.try_load_startup_excel()
         self.adjust_window()
@@ -264,6 +310,10 @@ class TheatreApp(QWidget):
         port_action = QAction("Set Port", self)
         port_action.triggered.connect(self.set_osc_port)
         osc_menu.addAction(port_action)
+
+        read_action = QAction("Read Channels", self)
+        read_action.triggered.connect(self.read_channels_from_mixer)
+        osc_menu.addAction(read_action)
 
         controls = QHBoxLayout()
         self.main_layout.addLayout(controls)
@@ -393,6 +443,9 @@ class TheatreApp(QWidget):
             self.channel_map = build_channel_map(self.actors)
             self.current_scene_index = 0
             self.last_live_state = None
+            self.current_live_state = {}
+            self.mismatch_actors.clear()
+            self.manual_override_actors.clear()
             self.last_excel_path = os.path.abspath(path)
 
             self.rebuild_cards()
@@ -436,6 +489,20 @@ class TheatreApp(QWidget):
             self.cards.append(card)
             self.row_layout.addWidget(card)
 
+    def card_enabled_state_for_display(self, actor, expected_enabled):
+        if actor in self.manual_override_actors:
+            return bool(expected_enabled)
+        if actor in self.mismatch_actors and actor in self.current_live_state:
+            return bool(self.current_live_state[actor])
+        return bool(expected_enabled)
+
+    def refresh_cards_from_scene(self, scene_state):
+        for actor, card in zip(self.actors, self.cards):
+            card.set_size(self.card_size)
+            expected_enabled = bool(scene_state.get(actor, False))
+            display_enabled = self.card_enabled_state_for_display(actor, expected_enabled)
+            card.set_muted(not display_enabled, actor in self.mismatch_actors)
+
     def draw_current_scene(self):
         if not self.scene_names:
             self.scene_label.setText("No Scene")
@@ -449,10 +516,7 @@ class TheatreApp(QWidget):
             return
         self.scene_label.setText(f"Scene: {scene_name}")
 
-        for actor, card in zip(self.actors, self.cards):
-            card.set_size(self.card_size)
-            enabled = bool(scene_state.get(actor, False))
-            card.set_muted(not enabled)
+        self.refresh_cards_from_scene(scene_state)
 
         self.adjust_window()
 
@@ -470,6 +534,7 @@ class TheatreApp(QWidget):
         if not value:
             return
         self.osc_ip = value
+        self.send_xremote_keepalive()
         self.status_label.setText(f"OSC target: {self.osc_ip}:{self.osc_port}")
         self.save_settings()
 
@@ -485,7 +550,8 @@ class TheatreApp(QWidget):
         if not ok:
             return
         self.osc_port = int(value)
-        self.status_label.setText(f"OSC target: {self.osc_ip}:{self.osc_port}")
+        self.restart_osc_listener()
+        self.status_label.setText(f"OSC target/readback: {self.osc_ip}:{self.osc_port}")
         self.save_settings()
 
     def adjust_window(self):
@@ -504,6 +570,7 @@ class TheatreApp(QWidget):
         self.draw_current_scene()
         self.card_edit_unlocked = False
         self.clear_bulk_toggle_state()
+        self.manual_override_actors.clear()
         self.set_take_pending(True)
 
     def next_scene(self):
@@ -513,6 +580,7 @@ class TheatreApp(QWidget):
         self.draw_current_scene()
         self.card_edit_unlocked = False
         self.clear_bulk_toggle_state()
+        self.manual_override_actors.clear()
         self.set_take_pending(True)
 
     def get_scene_state(self, scene_name):
@@ -532,13 +600,26 @@ class TheatreApp(QWidget):
         scene_name = self.scene_names[self.current_scene_index]
         return self.get_scene_state(scene_name)
 
+    def live_reference_state(self, scene_state):
+        reference = {}
+        for actor in scene_state:
+            if actor in self.current_live_state:
+                reference[actor] = bool(self.current_live_state[actor])
+            elif self.last_live_state is not None:
+                reference[actor] = bool(self.last_live_state.get(actor, scene_state[actor]))
+            else:
+                reference[actor] = bool(scene_state[actor])
+        return reference
+
     def has_pending_changes(self):
         scene_state = self.current_scene_state()
         if scene_state is None:
             return False
-        if self.last_live_state is None:
+        if self.last_live_state is None and not self.current_live_state:
             return True
-        return any(self.last_live_state.get(actor) != enabled for actor, enabled in scene_state.items())
+
+        reference = self.live_reference_state(scene_state)
+        return any(reference.get(actor) != bool(enabled) for actor, enabled in scene_state.items())
 
     def toggle_actor_for_current_scene(self, actor):
         if not self.card_edit_unlocked:
@@ -548,11 +629,10 @@ class TheatreApp(QWidget):
         if scene_state is None or actor not in scene_state:
             return
 
-        scene_state[actor] = not bool(scene_state[actor])
-        for card_actor, card in zip(self.actors, self.cards):
-            if card_actor == actor:
-                card.set_muted(not scene_state[actor])
-                break
+        base_enabled = bool(self.current_live_state.get(actor, scene_state[actor]))
+        scene_state[actor] = not base_enabled
+        self.manual_override_actors.add(actor)
+        self.refresh_cards_from_scene(scene_state)
 
         self.clear_bulk_toggle_state()
         self.set_take_pending(self.has_pending_changes())
@@ -595,8 +675,8 @@ class TheatreApp(QWidget):
             for actor in scene_state:
                 scene_state[actor] = value
 
-        for actor, card in zip(self.actors, self.cards):
-            card.set_muted(not scene_state.get(actor, False))
+        self.manual_override_actors.update(scene_state.keys())
+        self.refresh_cards_from_scene(scene_state)
 
         self.set_take_pending(self.has_pending_changes())
 
@@ -645,17 +725,16 @@ class TheatreApp(QWidget):
         )
 
         changes = 0
-        if self.last_live_state is None:
-            for actor, enabled in scene_state.items():
+        reference = self.live_reference_state(scene_state)
+        for actor, enabled in scene_state.items():
+            if reference.get(actor) != bool(enabled):
                 sender.send(actor, enabled)
                 changes += 1
-        else:
-            for actor, enabled in scene_state.items():
-                if self.last_live_state.get(actor) != enabled:
-                    sender.send(actor, enabled)
-                    changes += 1
 
         self.last_live_state = dict(scene_state)
+        self.current_live_state = dict(scene_state)
+        self.mismatch_actors.clear()
+        self.manual_override_actors.clear()
         self.card_edit_unlocked = True
         self.clear_bulk_toggle_state()
         self.set_take_pending(False)
@@ -664,13 +743,176 @@ class TheatreApp(QWidget):
             f"TAKE sent: {scene_name} | Changes: {changes} | OSC {self.osc_ip}:{self.osc_port}"
         )
 
+    def start_osc_listener(self):
+        dispatcher = Dispatcher()
+        dispatcher.set_default_handler(self.on_unhandled_osc)
+        dispatcher.map("/ch/*/mix/on", self.on_channel_status_osc)
+
+        try:
+            self.osc_listener = ThreadingOSCUDPServer(
+                (DEFAULT_OSC_LISTEN_IP, self.osc_port),
+                dispatcher,
+            )
+        except OSError as exc:
+            logging.warning(
+                "Could not start OSC listener on %s:%s (%s)",
+                DEFAULT_OSC_LISTEN_IP,
+                self.osc_port,
+                exc,
+            )
+            return
+
+        self.osc_listener_thread = threading.Thread(
+            target=self.osc_listener.serve_forever,
+            daemon=True,
+        )
+        self.osc_listener_thread.start()
+        logging.info("OSC listener started on %s:%s", DEFAULT_OSC_LISTEN_IP, self.osc_port)
+        self.xremote_timer.start()
+        self.send_xremote_keepalive()
+
+    def stop_osc_listener(self):
+        self.xremote_timer.stop()
+        if self.osc_listener is None:
+            return
+        self.osc_listener.shutdown()
+        self.osc_listener.server_close()
+        self.osc_listener = None
+        self.osc_listener_thread = None
+
+    def restart_osc_listener(self):
+        self.stop_osc_listener()
+        self.start_osc_listener()
+
+    def on_channel_status_osc(self, address, *args):
+        logging.debug("OSC RX matched: address=%s args=%s", address, args)
+        match = re.match(r"^/ch/(\d{1,2})/mix/on$", str(address))
+        if not match or not args:
+            logging.debug("OSC RX ignored (invalid format or empty args): address=%s args=%s", address, args)
+            return
+
+        try:
+            channel = int(match.group(1))
+            value = float(args[0])
+        except (TypeError, ValueError):
+            return
+
+        enabled = value >= 0.5
+        logging.debug("OSC parsed channel update: channel=%s enabled=%s raw_value=%s", channel, enabled, value)
+        self.channel_status_received.emit(channel, enabled)
+
+    def handle_channel_status_update(self, channel, enabled):
+        logging.debug("UI handling channel update: channel=%s enabled=%s", channel, enabled)
+        actor = next((name for name, ch in self.channel_map.items() if ch == channel), None)
+        if actor is None:
+            logging.debug("No actor mapped for channel=%s", channel)
+            return
+
+        self.current_live_state[actor] = enabled
+        if self.last_live_state is None:
+            self.last_live_state = {}
+        self.last_live_state[actor] = bool(enabled)
+        scene_state = self.current_scene_state()
+        if scene_state is None:
+            return
+
+        expected = bool(scene_state.get(actor, False))
+        if expected != enabled:
+            self.mismatch_actors.add(actor)
+        else:
+            self.mismatch_actors.discard(actor)
+            self.manual_override_actors.discard(actor)
+
+        logging.debug(
+            "Comparison result: actor=%s expected=%s live=%s mismatch_count=%s",
+            actor,
+            expected,
+            enabled,
+            len(self.mismatch_actors),
+        )
+
+        self.draw_current_scene()
+        if self.mismatch_actors:
+            self.status_label.setText(
+                "Channel mismatch detected (yellow border): mixer status differs from current scene"
+            )
+
+    def send_from_listener_socket(self, address, args=()):
+        if self.osc_listener is None:
+            logging.warning("OSC listener not running, cannot send: %s", address)
+            return False
+
+        try:
+            builder = OscMessageBuilder(address=address)
+            for arg in args:
+                builder.add_arg(arg)
+            message = builder.build()
+            self.osc_listener.socket.sendto(message.dgram, (self.osc_ip, self.osc_port))
+            logging.debug(
+                "OSC datagram sent via listener socket | address=%s args=%s local=%s:%s remote=%s:%s bytes=%s",
+                address,
+                args,
+                DEFAULT_OSC_LISTEN_IP,
+                self.osc_port,
+                self.osc_ip,
+                self.osc_port,
+                len(message.dgram),
+            )
+            return True
+        except OSError as exc:
+            logging.warning("OSC send failed for %s (%s)", address, exc)
+            return False
+
+    def send_xremote_keepalive(self):
+        if self.send_from_listener_socket("/xremote"):
+            logging.debug("OSC /xremote keepalive sent")
+
+    def send_query_from_listener_socket(self, address):
+        if self.send_from_listener_socket(address):
+            logging.info("OSC query (listener socket): %s", address)
+            return True
+        return False
+
+    def read_channels_from_mixer(self):
+        if not self.actors:
+            return
+
+        if self.osc_listener is None:
+            self.status_label.setText("OSC listener is not active; cannot request channel states")
+            logging.warning("Read Channels requested but listener is not active")
+            return
+
+        sent = 0
+        for actor in self.actors:
+            ch = self.channel_map.get(actor)
+            if ch is None:
+                continue
+            address = DEFAULT_ADDRESS_TEMPLATE.format(ch=ch)
+            if self.send_query_from_listener_socket(address):
+                sent += 1
+                logging.debug("OSC query requested for actor=%s channel=%s", actor, ch)
+
+        self.status_label.setText(
+            f"Requested channel states from mixer ({sent}) | listening on UDP {self.osc_port}"
+        )
+
+    def on_unhandled_osc(self, address, *args):
+        logging.debug("OSC RX unhandled: address=%s args=%s", address, args)
+
     def closeEvent(self, event):
+        self.stop_osc_listener()
         self.save_settings()
         super().closeEvent(event)
 
 
 def main():
-    app = QApplication(sys.argv)
+    parser = argparse.ArgumentParser(description="X32 Theatre Mic Controller")
+    parser.add_argument("--debug", action="store_true", help="Enable verbose OSC/debug logging")
+    args, qt_args = parser.parse_known_args()
+
+    setup_logging(debug=args.debug)
+
+    app = QApplication([sys.argv[0], *qt_args])
     window = TheatreApp()
     window.show()
     sys.exit(app.exec())
