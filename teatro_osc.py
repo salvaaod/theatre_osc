@@ -346,6 +346,10 @@ class TheatreApp(QWidget):
         read_action.triggered.connect(self.read_channels_from_mixer)
         osc_menu.addAction(read_action)
 
+        send_names_action = QAction("Send Channel Names", self)
+        send_names_action.triggered.connect(self.send_channel_names_to_mixer)
+        osc_menu.addAction(send_names_action)
+
         self.controls_layout = QHBoxLayout()
         self.main_layout.addLayout(self.controls_layout)
 
@@ -1057,6 +1061,37 @@ class TheatreApp(QWidget):
 
         self.status_label.setText(
             f"Requested channel states from mixer ({sent}) | listening on UDP {self.osc_port}"
+        )
+
+    def sanitize_channel_name(self, name):
+        text = str(name).strip()
+        if not text:
+            return ""
+        return text[:12]
+
+    def send_channel_names_to_mixer(self):
+        if not self.actors:
+            return
+
+        sent = 0
+        for actor in self.actors:
+            ch = self.channel_map.get(actor)
+            if ch is None:
+                continue
+
+            channel_name = self.sanitize_channel_name(actor)
+            address = f"/ch/{ch:02d}/config/name"
+            if self.send_from_listener_socket(address, (channel_name,)):
+                sent += 1
+                logging.debug(
+                    "OSC channel name sent: actor=%s channel=%s name=%s",
+                    actor,
+                    ch,
+                    channel_name,
+                )
+
+        self.status_label.setText(
+            f"Sent channel names to mixer ({sent}) | OSC {self.osc_ip}:{self.osc_port}"
         )
 
     def on_unhandled_osc(self, address, *args):
