@@ -394,7 +394,8 @@ class TheatreApp(QWidget):
         self.update_controls_cards_gap()
 
     def update_controls_cards_gap(self):
-        gap = max(10, int(round(self.card_size * 0.25)))
+        scale = max(0.5, self.card_size / BASE_CARD_SIZE)
+        gap = max(4, int(round(12 * (scale ** 2))))
         self.controls_cards_gap.setFixedHeight(gap)
 
     def load_settings(self):
