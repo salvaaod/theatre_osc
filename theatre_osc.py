@@ -490,7 +490,7 @@ class TheatreApp(QWidget):
 
     def configure_scene_label_position_offset(self):
         metrics = QFontMetrics(self.scene_label.font())
-        left_shift = metrics.horizontalAdvance("W" * 5)
+        left_shift = metrics.horizontalAdvance("W" * 2)
         self.scene_label_right_offset.setFixedWidth(left_shift)
 
     def update_control_button_sizes(self):
