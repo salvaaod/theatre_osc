@@ -425,6 +425,10 @@ class TheatreApp(QWidget):
         self.configure_scene_label_width()
         self.controls_layout.addWidget(self.scene_label)
 
+        self.scene_label_right_offset = QWidget()
+        self.configure_scene_label_position_offset()
+        self.controls_layout.addWidget(self.scene_label_right_offset)
+
         self.controls_layout.addStretch()
 
         self.all_on_btn = QPushButton("ALL ON")
@@ -479,10 +483,15 @@ class TheatreApp(QWidget):
             self.load_excel_action.setText(f"Load Excel ({excel_name})")
 
     def configure_scene_label_width(self):
-        placeholder = "SCENE: " + ("W" * 20)
+        placeholder = "SCENE: " + ("W" * 30)
         metrics = QFontMetrics(self.scene_label.font())
         width = metrics.horizontalAdvance(placeholder) + 20
         self.scene_label.setFixedWidth(width)
+
+    def configure_scene_label_position_offset(self):
+        metrics = QFontMetrics(self.scene_label.font())
+        left_shift = metrics.horizontalAdvance("W" * 2)
+        self.scene_label_right_offset.setFixedWidth(left_shift)
 
     def update_control_button_sizes(self):
         scale = max(0.5, self.card_size / BASE_CARD_SIZE)
