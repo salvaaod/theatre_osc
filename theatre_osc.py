@@ -7,6 +7,7 @@ import os
 import re
 import sys
 import threading
+import time
 
 from openpyxl import load_workbook
 from pythonosc.dispatcher import Dispatcher
@@ -37,6 +38,7 @@ LOCAL_LISTEN_PORT_OFFSET = 10
 DEFAULT_ADDRESS_TEMPLATE = "/ch/{ch:02d}/mix/on"
 DEFAULT_OSC_VALUE_FOR_ON = 1
 DEFAULT_OSC_VALUE_FOR_OFF = 0
+DEFAULT_OSC_SEND_DELAY_MS = 0
 
 TRUTHY = {"YES", "Y", "TRUE", "T", "1", "ON"}
 FALSY = {"NO", "N", "FALSE", "F", "0", "OFF", ""}
@@ -303,6 +305,7 @@ class TheatreApp(QWidget):
         self.osc_ip = DEFAULT_OSC_IP
         self.osc_port = DEFAULT_OSC_PORT
         self.osc_listen_port = derive_listen_port(self.osc_port)
+        self.osc_send_delay_ms = DEFAULT_OSC_SEND_DELAY_MS
         self.cards = []
         self.control_buttons = []
         self.pending_take = False
@@ -385,6 +388,10 @@ class TheatreApp(QWidget):
         self.port_action = QAction("Set Port", self)
         self.port_action.triggered.connect(self.set_osc_port)
         osc_menu.addAction(self.port_action)
+
+        self.send_delay_action = QAction("Set Send Delay (ms)", self)
+        self.send_delay_action.triggered.connect(self.set_osc_send_delay)
+        osc_menu.addAction(self.send_delay_action)
 
         read_action = QAction("Read Channels", self)
         read_action.triggered.connect(self.read_channels_from_mixer)
@@ -478,6 +485,11 @@ class TheatreApp(QWidget):
         if hasattr(self, "port_action"):
             self.port_action.setText(f"Set Port ({self.osc_port})")
 
+        if hasattr(self, "send_delay_action"):
+            self.send_delay_action.setText(
+                f"Set Send Delay (ms) ({self.osc_send_delay_ms})"
+            )
+
         if hasattr(self, "load_excel_action"):
             excel_name = os.path.basename(self.last_excel_path) if self.last_excel_path else "none"
             self.load_excel_action.setText(f"Load Excel ({excel_name})")
@@ -524,6 +536,10 @@ class TheatreApp(QWidget):
             self.osc_ip = str(settings.get("osc_ip", self.osc_ip)).strip() or self.osc_ip
             self.osc_port = int(settings.get("osc_port", self.osc_port))
             self.osc_listen_port = derive_listen_port(self.osc_port)
+            self.osc_send_delay_ms = max(
+                0,
+                int(settings.get("osc_send_delay_ms", self.osc_send_delay_ms)),
+            )
             self.always_visible = bool(settings.get("always_visible", self.always_visible))
             window_x = settings.get("window_x")
             window_y = settings.get("window_y")
@@ -543,6 +559,7 @@ class TheatreApp(QWidget):
             "osc_ip": self.osc_ip,
             "osc_port": self.osc_port,
             "osc_listen_port": self.osc_listen_port,
+            "osc_send_delay_ms": self.osc_send_delay_ms,
             "always_visible": self.always_visible,
             "window_x": int(self.pos().x()),
             "window_y": int(self.pos().y()),
@@ -695,6 +712,25 @@ class TheatreApp(QWidget):
         self.restart_osc_listener()
         self.status_label.setText(
             f"OSC target: {self.osc_ip}:{self.osc_port} | Local listen UDP {self.osc_listen_port}"
+        )
+        self.update_menu_state()
+        self.save_settings()
+
+    def set_osc_send_delay(self):
+        value, ok = QInputDialog.getInt(
+            self,
+            "Set OSC Send Delay",
+            "Send delay between OSC messages (ms):",
+            value=self.osc_send_delay_ms,
+            minValue=0,
+            maxValue=50,
+        )
+        if not ok:
+            return
+
+        self.osc_send_delay_ms = int(value)
+        self.status_label.setText(
+            f"OSC send delay set: {self.osc_send_delay_ms} ms | OSC {self.osc_ip}:{self.osc_port}"
         )
         self.update_menu_state()
         self.save_settings()
@@ -983,6 +1019,8 @@ class TheatreApp(QWidget):
                 sender.send(actor, enabled)
                 changes += 1
                 sent_actors.add(actor)
+                if self.osc_send_delay_ms > 0:
+                    time.sleep(self.osc_send_delay_ms / 1000.0)
 
         self.force_full_send_next_take = False
         if self.last_live_state is None:
@@ -997,9 +1035,16 @@ class TheatreApp(QWidget):
         self.card_edit_unlocked = True
         self.clear_bulk_toggle_state()
         self.set_take_pending(False)
-        logging.info("TAKE scene: %s | Changes: %d", scene_name, changes)
+        logging.info(
+            "TAKE scene: %s | Changes: %d | Send delay: %d ms",
+            scene_name,
+            changes,
+            self.osc_send_delay_ms,
+        )
         self.status_label.setText(
-            f"TAKE sent: {scene_name} | Changes: {changes} | OSC {self.osc_ip}:{self.osc_port}"
+            "TAKE sent: "
+            f"{scene_name} | Changes: {changes} | Delay: {self.osc_send_delay_ms} ms "
+            f"| OSC {self.osc_ip}:{self.osc_port}"
         )
 
     def start_osc_listener(self):
