@@ -483,7 +483,7 @@ class TheatreApp(QWidget):
             self.load_excel_action.setText(f"Load Excel ({excel_name})")
 
     def configure_scene_label_width(self):
-        placeholder = "SCENE: " + ("W" * 25)
+        placeholder = "SCENE: " + ("W" * 30)
         metrics = QFontMetrics(self.scene_label.font())
         width = metrics.horizontalAdvance(placeholder) + 20
         self.scene_label.setFixedWidth(width)
