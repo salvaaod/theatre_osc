@@ -24,6 +24,7 @@ conflicts by using the configured OSC target port for outbound traffic and liste
 - Active channels are shown with neutral cards; muted channels are red.
 - Scene controls are `Previous`, `Next`, and `Take` (`Take` sends OSC changes).
 - Card size and OSC IP/port are configurable from the Settings menu.
+- Settings → OSC also includes **Set Send Delay (ms)** (`0..50`) to pace outbound TAKE bursts when large cue changes cause dropped commands on some networks/mixers.
 
 ## Excel format
 
