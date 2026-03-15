@@ -811,12 +811,19 @@ class TheatreApp(QWidget):
         self.manual_edit_scene_name = ""
         self.manual_edit_snapshot = None
 
+    def reset_scene_preview_state(self):
+        self.current_live_state = {}
+        self.mismatch_actors.clear()
+        self.mismatch_blink_timer.stop()
+        self.mismatch_blink_on = False
+
     def previous_scene(self):
         if self.bulk_toggle_interaction_locked():
             return
         if not self.scene_names:
             return
         self.current_scene_index = (self.current_scene_index - 1) % len(self.scene_names)
+        self.reset_scene_preview_state()
         self.draw_current_scene()
         self.card_edit_unlocked = False
         self.clear_bulk_toggle_state()
@@ -830,6 +837,7 @@ class TheatreApp(QWidget):
         if not self.scene_names:
             return
         self.current_scene_index = (self.current_scene_index + 1) % len(self.scene_names)
+        self.reset_scene_preview_state()
         self.draw_current_scene()
         self.card_edit_unlocked = False
         self.clear_bulk_toggle_state()
@@ -884,11 +892,19 @@ class TheatreApp(QWidget):
     def toggle_actor_for_current_scene(self, actor):
         if self.bulk_toggle_interaction_locked():
             return
-        if not self.card_edit_unlocked:
+        if not self.card_edit_unlocked and actor not in self.mismatch_actors:
             return
 
         scene_state = self.current_scene_state()
         if scene_state is None or actor not in scene_state:
+            return
+
+        if actor in self.mismatch_actors and actor in self.current_live_state:
+            self.manual_override_actors.add(actor)
+            self.refresh_cards_from_scene(scene_state)
+            had_bulk_toggle = self.bulk_toggle_snapshot is not None
+            self.clear_bulk_toggle_state()
+            self.set_take_pending(self.has_pending_changes() or had_bulk_toggle)
             return
 
         scene_name = self.scene_names[self.current_scene_index]
