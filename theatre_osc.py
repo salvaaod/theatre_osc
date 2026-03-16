@@ -428,6 +428,7 @@ class TheatreApp(QWidget):
         self.control_buttons.append(self.take_btn)
 
         self.clear_btn = QPushButton("Clear")
+        self.clear_btn.setStyleSheet(button_style)
         self.clear_btn.clicked.connect(self.clear_pending_changes)
         self.controls_layout.addWidget(self.clear_btn)
         self.control_buttons.append(self.clear_btn)
@@ -1050,19 +1051,6 @@ class TheatreApp(QWidget):
             f"QPushButton {{ border: {border}; border-radius: 4px; background: {background}; color: {text_color}; }}"
         )
 
-        if self.pending_take:
-            clear_background = "#ffd84d" if self.take_blink_on else "#b38f00"
-            clear_text_color = "#111111"
-        else:
-            clear_background = "#4a4a4a"
-            clear_text_color = "#ffffff"
-
-        self.clear_btn.setStyleSheet(
-            "QPushButton { "
-            f"border: {border}; border-radius: 4px; "
-            f"background: {clear_background}; color: {clear_text_color};"
-            " }"
-        )
 
     def clear_pending_changes(self):
         if not self.pending_take or not self.scene_names:
