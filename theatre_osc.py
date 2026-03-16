@@ -1178,6 +1178,23 @@ class TheatreApp(QWidget):
         if scene_state is None:
             return
 
+        if actor in scene_state and bool(scene_state[actor]) != bool(enabled):
+            # External mixer edits should mirror an in-app applied card change
+            # so the current scene preview stays consistent with live state.
+            scene_state[actor] = bool(enabled)
+            self.card_edit_unlocked = True
+            self.manual_override_actors.discard(actor)
+            if self.manual_edit_scene_name == self.scene_names[self.current_scene_index]:
+                if self.manual_edit_snapshot is not None:
+                    self.manual_edit_snapshot[actor] = bool(enabled)
+            logging.info(
+                "External update synced into current scene override: actor=%s enabled=%s",
+                actor,
+                enabled,
+            )
+
+        self.set_take_pending(self.has_pending_changes())
+
         self.draw_current_scene()
         logging.debug(
             "Comparison result: actor=%s live=%s mismatch_count=%s",
