@@ -253,10 +253,10 @@ class Card(QFrame):
         self.label.setFont(font)
         self.label.setMaximumWidth(size - 8)
 
-    def set_muted(self, muted, mismatch=False):
+    def set_muted(self, muted, mismatch=False, mismatch_blink_on=False):
         bg = CARD_OFF_COLOR if muted else CARD_ON_COLOR
         text = CARD_TEXT_OFF_COLOR if muted else CARD_TEXT_ON_COLOR
-        border = CARD_MISMATCH_BORDER_COLOR if mismatch else "#555"
+        border = CARD_MISMATCH_BORDER_COLOR if mismatch and mismatch_blink_on else "#555"
         self.setStyleSheet(
             f"""
             QFrame {{
@@ -320,6 +320,8 @@ class TheatreApp(QWidget):
         self.take_blink_timer = QTimer(self)
         self.take_blink_timer.setInterval(450)
         self.take_blink_timer.timeout.connect(self.toggle_take_blink)
+
+        self.mismatch_blink_on = False
 
         self.xremote_timer = QTimer(self)
         self.xremote_timer.setInterval(XREMOTE_KEEPALIVE_INTERVAL_MS)
@@ -646,16 +648,40 @@ class TheatreApp(QWidget):
     def card_enabled_state_for_display(self, actor, expected_enabled):
         if actor in self.manual_override_actors:
             return bool(expected_enabled)
-        if actor in self.mismatch_actors and actor in self.current_live_state:
+        if actor in self.current_live_state:
             return bool(self.current_live_state[actor])
         return bool(expected_enabled)
 
+    def recompute_mismatch_actors(self, scene_name, scene_state):
+        loaded_scene_state = self.scenes.get(scene_name, {})
+        mismatch = set()
+        for actor in self.actors:
+            loaded_expected = bool(loaded_scene_state.get(actor, False))
+            current_enabled = self.card_enabled_state_for_display(
+                actor,
+                bool(scene_state.get(actor, False)),
+            )
+            if current_enabled != loaded_expected:
+                mismatch.add(actor)
+
+        self.mismatch_actors = mismatch
+        if self.mismatch_actors and not self.take_blink_timer.isActive():
+            self.take_blink_on = True
+        self.update_blink_activity()
+        self.mismatch_blink_on = self.take_blink_on if self.mismatch_actors else False
+
     def refresh_cards_from_scene(self, scene_state):
+        scene_name = self.scene_names[self.current_scene_index] if self.scene_names else ""
+        self.recompute_mismatch_actors(scene_name, scene_state)
         for actor, card in zip(self.actors, self.cards):
             card.set_size(self.card_size)
             expected_enabled = bool(scene_state.get(actor, False))
             display_enabled = self.card_enabled_state_for_display(actor, expected_enabled)
-            card.set_muted(not display_enabled, actor in self.mismatch_actors)
+            card.set_muted(
+                not display_enabled,
+                actor in self.mismatch_actors,
+                self.mismatch_blink_on,
+            )
 
     def draw_current_scene(self):
         if not self.scene_names:
@@ -779,12 +805,19 @@ class TheatreApp(QWidget):
         self.manual_edit_scene_name = ""
         self.manual_edit_snapshot = None
 
+    def reset_scene_preview_state(self):
+        self.current_live_state = {}
+        self.mismatch_actors.clear()
+        self.mismatch_blink_on = False
+        self.update_blink_activity()
+
     def previous_scene(self):
         if self.bulk_toggle_interaction_locked():
             return
         if not self.scene_names:
             return
         self.current_scene_index = (self.current_scene_index - 1) % len(self.scene_names)
+        self.reset_scene_preview_state()
         self.draw_current_scene()
         self.card_edit_unlocked = False
         self.clear_bulk_toggle_state()
@@ -798,6 +831,7 @@ class TheatreApp(QWidget):
         if not self.scene_names:
             return
         self.current_scene_index = (self.current_scene_index + 1) % len(self.scene_names)
+        self.reset_scene_preview_state()
         self.draw_current_scene()
         self.card_edit_unlocked = False
         self.clear_bulk_toggle_state()
@@ -852,11 +886,23 @@ class TheatreApp(QWidget):
     def toggle_actor_for_current_scene(self, actor):
         if self.bulk_toggle_interaction_locked():
             return
-        if not self.card_edit_unlocked:
-            return
 
         scene_state = self.current_scene_state()
         if scene_state is None or actor not in scene_state:
+            return
+
+        if not self.card_edit_unlocked:
+            if actor in self.current_live_state and (
+                actor in self.mismatch_actors or actor in self.manual_override_actors
+            ):
+                if actor in self.manual_override_actors:
+                    self.manual_override_actors.discard(actor)
+                else:
+                    self.manual_override_actors.add(actor)
+                self.refresh_cards_from_scene(scene_state)
+                had_bulk_toggle = self.bulk_toggle_snapshot is not None
+                self.clear_bulk_toggle_state()
+                self.set_take_pending(bool(self.manual_override_actors) or had_bulk_toggle)
             return
 
         scene_name = self.scene_names[self.current_scene_index]
@@ -955,19 +1001,30 @@ class TheatreApp(QWidget):
         for card in self.cards:
             card.setEnabled(not locked)
 
-    def toggle_take_blink(self):
-        self.take_blink_on = not self.take_blink_on
-        self.update_take_button_style()
-
-    def set_take_pending(self, pending):
-        self.pending_take = bool(pending)
-        if self.pending_take:
-            self.take_blink_on = True
+    def update_blink_activity(self):
+        should_blink = self.pending_take or bool(self.mismatch_actors)
+        if should_blink:
             if not self.take_blink_timer.isActive():
                 self.take_blink_timer.start()
         else:
             self.take_blink_timer.stop()
             self.take_blink_on = False
+            self.mismatch_blink_on = False
+
+    def toggle_take_blink(self):
+        self.take_blink_on = not self.take_blink_on
+        self.mismatch_blink_on = self.take_blink_on if self.mismatch_actors else False
+        self.update_take_button_style()
+        scene_state = self.current_scene_state()
+        if scene_state is not None:
+            self.refresh_cards_from_scene(scene_state)
+
+    def set_take_pending(self, pending):
+        self.pending_take = bool(pending)
+        if self.pending_take and not self.take_blink_timer.isActive():
+            self.take_blink_on = True
+            self.mismatch_blink_on = self.take_blink_on if self.mismatch_actors else False
+        self.update_blink_activity()
         self.update_take_button_style()
         self.apply_bulk_toggle_interaction_lock()
 
@@ -1121,31 +1178,17 @@ class TheatreApp(QWidget):
         if scene_state is None:
             return
 
-        expected = bool(scene_state.get(actor, False))
-        if expected != enabled:
-            self.mismatch_actors.add(actor)
-        else:
-            self.mismatch_actors.discard(actor)
-            self.manual_override_actors.discard(actor)
-
+        self.draw_current_scene()
         logging.debug(
-            "Comparison result: actor=%s expected=%s live=%s mismatch_count=%s",
+            "Comparison result: actor=%s live=%s mismatch_count=%s",
             actor,
-            expected,
             enabled,
             len(self.mismatch_actors),
         )
 
-        self.draw_current_scene()
-        has_bulk_pending = (
-            self.bulk_toggle_snapshot is not None
-            and self.bulk_toggle_scene_name == self.scene_names[self.current_scene_index]
-        ) if self.scene_names else False
-        self.set_take_pending(self.has_pending_changes() or has_bulk_pending)
-
         if self.mismatch_actors:
             self.status_label.setText(
-                "External mixer change detected: press TAKE to restore current scene (yellow border marks mismatches)"
+                "Current status differs from loaded Excel (blinking yellow border marks mismatches)"
             )
 
     def send_from_listener_socket(self, address, args=()):
