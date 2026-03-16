@@ -322,9 +322,6 @@ class TheatreApp(QWidget):
         self.take_blink_timer.timeout.connect(self.toggle_take_blink)
 
         self.mismatch_blink_on = False
-        self.mismatch_blink_timer = QTimer(self)
-        self.mismatch_blink_timer.setInterval(450)
-        self.mismatch_blink_timer.timeout.connect(self.toggle_mismatch_blink)
 
         self.xremote_timer = QTimer(self)
         self.xremote_timer.setInterval(XREMOTE_KEEPALIVE_INTERVAL_MS)
@@ -668,13 +665,10 @@ class TheatreApp(QWidget):
                 mismatch.add(actor)
 
         self.mismatch_actors = mismatch
-        if self.mismatch_actors:
-            if not self.mismatch_blink_timer.isActive():
-                self.mismatch_blink_on = True
-                self.mismatch_blink_timer.start()
-        else:
-            self.mismatch_blink_timer.stop()
-            self.mismatch_blink_on = False
+        if self.mismatch_actors and not self.take_blink_timer.isActive():
+            self.take_blink_on = True
+        self.update_blink_activity()
+        self.mismatch_blink_on = self.take_blink_on if self.mismatch_actors else False
 
     def refresh_cards_from_scene(self, scene_state):
         scene_name = self.scene_names[self.current_scene_index] if self.scene_names else ""
@@ -814,8 +808,8 @@ class TheatreApp(QWidget):
     def reset_scene_preview_state(self):
         self.current_live_state = {}
         self.mismatch_actors.clear()
-        self.mismatch_blink_timer.stop()
         self.mismatch_blink_on = False
+        self.update_blink_activity()
 
     def previous_scene(self):
         if self.bulk_toggle_interaction_locked():
@@ -1007,25 +1001,30 @@ class TheatreApp(QWidget):
         for card in self.cards:
             card.setEnabled(not locked)
 
+    def update_blink_activity(self):
+        should_blink = self.pending_take or bool(self.mismatch_actors)
+        if should_blink:
+            if not self.take_blink_timer.isActive():
+                self.take_blink_timer.start()
+        else:
+            self.take_blink_timer.stop()
+            self.take_blink_on = False
+            self.mismatch_blink_on = False
+
     def toggle_take_blink(self):
         self.take_blink_on = not self.take_blink_on
+        self.mismatch_blink_on = self.take_blink_on if self.mismatch_actors else False
         self.update_take_button_style()
-
-    def toggle_mismatch_blink(self):
-        self.mismatch_blink_on = not self.mismatch_blink_on
         scene_state = self.current_scene_state()
         if scene_state is not None:
             self.refresh_cards_from_scene(scene_state)
 
     def set_take_pending(self, pending):
         self.pending_take = bool(pending)
-        if self.pending_take:
+        if self.pending_take and not self.take_blink_timer.isActive():
             self.take_blink_on = True
-            if not self.take_blink_timer.isActive():
-                self.take_blink_timer.start()
-        else:
-            self.take_blink_timer.stop()
-            self.take_blink_on = False
+            self.mismatch_blink_on = self.take_blink_on if self.mismatch_actors else False
+        self.update_blink_activity()
         self.update_take_button_style()
         self.apply_bulk_toggle_interaction_lock()
 
