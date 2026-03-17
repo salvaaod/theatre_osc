@@ -422,16 +422,16 @@ class TheatreApp(QWidget):
         self.controls_layout.addWidget(self.next_btn)
         self.control_buttons.append(self.next_btn)
 
-        self.take_btn = QPushButton("Take")
-        self.take_btn.clicked.connect(self.apply_scene)
-        self.controls_layout.addWidget(self.take_btn)
-        self.control_buttons.append(self.take_btn)
-
         self.clear_btn = QPushButton("Clear")
         self.clear_btn.setStyleSheet(button_style)
         self.clear_btn.clicked.connect(self.clear_pending_changes)
         self.controls_layout.addWidget(self.clear_btn)
         self.control_buttons.append(self.clear_btn)
+
+        self.take_btn = QPushButton("Take")
+        self.take_btn.clicked.connect(self.apply_scene)
+        self.controls_layout.addWidget(self.take_btn)
+        self.control_buttons.append(self.take_btn)
 
         self.controls_layout.addStretch()
 
