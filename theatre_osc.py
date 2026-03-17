@@ -291,6 +291,7 @@ class TheatreApp(QWidget):
         self.actors = []
         self.channel_map = {}
         self.current_scene_index = 0
+        self.last_taken_scene_index = None
         self.last_live_state = None
         self.current_live_state = {}
         self.mismatch_actors = set()
@@ -421,6 +422,12 @@ class TheatreApp(QWidget):
         self.controls_layout.addWidget(self.next_btn)
         self.control_buttons.append(self.next_btn)
 
+        self.clear_btn = QPushButton("Clear")
+        self.clear_btn.setStyleSheet(button_style)
+        self.clear_btn.clicked.connect(self.clear_pending_changes)
+        self.controls_layout.addWidget(self.clear_btn)
+        self.control_buttons.append(self.clear_btn)
+
         self.take_btn = QPushButton("Take")
         self.take_btn.clicked.connect(self.apply_scene)
         self.controls_layout.addWidget(self.take_btn)
@@ -472,6 +479,7 @@ class TheatreApp(QWidget):
 
         self.update_control_button_sizes()
         self.update_take_button_style()
+        self.clear_btn.setEnabled(False)
         self.update_menu_state()
 
     def update_menu_state(self):
@@ -596,6 +604,7 @@ class TheatreApp(QWidget):
             self.actors = parsed["actors"]
             self.channel_map = build_channel_map(self.actors)
             self.current_scene_index = 0
+            self.last_taken_scene_index = None
             self.last_live_state = None
             self.current_live_state = {}
             self.force_full_send_next_take = True
@@ -1026,6 +1035,7 @@ class TheatreApp(QWidget):
             self.mismatch_blink_on = self.take_blink_on if self.mismatch_actors else False
         self.update_blink_activity()
         self.update_take_button_style()
+        self.clear_btn.setEnabled(self.pending_take)
         self.apply_bulk_toggle_interaction_lock()
 
     def update_take_button_style(self):
@@ -1039,6 +1049,34 @@ class TheatreApp(QWidget):
 
         self.take_btn.setStyleSheet(
             f"QPushButton {{ border: {border}; border-radius: 4px; background: {background}; color: {text_color}; }}"
+        )
+
+
+    def clear_pending_changes(self):
+        if not self.pending_take or not self.scene_names:
+            return
+
+        if self.last_taken_scene_index is not None:
+            self.current_scene_index = self.last_taken_scene_index
+
+        scene_name = self.scene_names[self.current_scene_index]
+        scene_state = self.get_scene_state(scene_name)
+        if scene_state is None:
+            return
+
+        reference = self.live_reference_state(scene_state)
+        for actor in scene_state:
+            scene_state[actor] = bool(reference.get(actor, scene_state[actor]))
+
+        self.manual_override_actors.clear()
+        self.clear_manual_edit_state()
+        self.clear_bulk_toggle_state()
+        self.card_edit_unlocked = self.last_taken_scene_index is not None
+        self.draw_current_scene()
+        self.refresh_cards_from_scene(scene_state)
+        self.set_take_pending(False)
+        self.status_label.setText(
+            f"Cleared pending changes | OSC {self.osc_ip}:{self.osc_port}"
         )
 
     def apply_scene(self):
@@ -1080,6 +1118,7 @@ class TheatreApp(QWidget):
                     time.sleep(self.osc_send_delay_ms / 1000.0)
 
         self.force_full_send_next_take = False
+        self.last_taken_scene_index = self.current_scene_index
         if self.last_live_state is None:
             self.last_live_state = {}
         for actor in sent_actors:
