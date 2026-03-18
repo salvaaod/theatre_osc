@@ -39,6 +39,8 @@ DEFAULT_ADDRESS_TEMPLATE = "/ch/{ch:02d}/mix/on"
 DEFAULT_OSC_VALUE_FOR_ON = 1
 DEFAULT_OSC_VALUE_FOR_OFF = 0
 DEFAULT_OSC_SEND_DELAY_MS = 0
+CONNECTION_PROBE_INTERVAL_MS = 2000
+CONNECTION_RESPONSE_TIMEOUT_MS = 5000
 
 TRUTHY = {"YES", "Y", "TRUE", "T", "1", "ON"}
 FALSY = {"NO", "N", "FALSE", "F", "0", "OFF", ""}
@@ -327,6 +329,12 @@ class TheatreApp(QWidget):
         self.xremote_timer = QTimer(self)
         self.xremote_timer.setInterval(XREMOTE_KEEPALIVE_INTERVAL_MS)
         self.xremote_timer.timeout.connect(self.send_xremote_keepalive)
+        self.connection_probe_timer = QTimer(self)
+        self.connection_probe_timer.setInterval(CONNECTION_PROBE_INTERVAL_MS)
+        self.connection_probe_timer.timeout.connect(self.probe_mixer_connection)
+        self.connection_state_connected = False
+        self.connection_model_name = ""
+        self.last_connection_response_monotonic = 0.0
 
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(10, 10, 10, 10)
@@ -343,6 +351,11 @@ class TheatreApp(QWidget):
     def build_ui(self):
         self.menu_bar = QMenuBar()
         self.main_layout.setMenuBar(self.menu_bar)
+        self.connection_status_label = QLabel("DISCONNECTED", self.menu_bar)
+        self.connection_status_label.setAlignment(Qt.AlignCenter)
+        self.connection_status_label.setMargin(6)
+        self.connection_status_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.connection_status_label.raise_()
 
         file_menu = self.menu_bar.addMenu("File")
         self.load_excel_action = QAction("Load Excel", self)
@@ -503,6 +516,46 @@ class TheatreApp(QWidget):
         if hasattr(self, "load_excel_action"):
             excel_name = os.path.basename(self.last_excel_path) if self.last_excel_path else "none"
             self.load_excel_action.setText(f"Load Excel ({excel_name})")
+
+        self.update_connection_status_label()
+
+    def update_connection_status_label(self):
+        if not hasattr(self, "connection_status_label"):
+            return
+
+        connected = bool(self.connection_state_connected)
+        text = "CONNECTED" if connected else "DISCONNECTED"
+        if connected and self.connection_model_name:
+            text = f"{text} ({self.connection_model_name})"
+
+        bg = "#0f7a2a" if connected else "#b00020"
+        fg = "#ffffff"
+        self.connection_status_label.setText(text)
+        self.connection_status_label.setStyleSheet(
+            f"""
+            QLabel {{
+                background-color: {bg};
+                color: {fg};
+                font-weight: bold;
+                border-radius: 4px;
+                padding: 2px 8px;
+                margin-left: 8px;
+            }}
+            """
+        )
+        self.connection_status_label.adjustSize()
+        self.position_connection_status_label()
+
+    def position_connection_status_label(self):
+        if not hasattr(self, "connection_status_label") or not hasattr(self, "menu_bar"):
+            return
+
+        self.connection_status_label.adjustSize()
+        badge_size = self.connection_status_label.sizeHint()
+        x = max(0, int((self.menu_bar.width() - badge_size.width()) / 2))
+        y = max(0, int((self.menu_bar.height() - badge_size.height()) / 2))
+        self.connection_status_label.move(x, y)
+        self.connection_status_label.raise_()
 
     def configure_scene_label_width(self):
         placeholder = "SCENE: " + ("W" * 30)
@@ -798,6 +851,7 @@ class TheatreApp(QWidget):
     def adjust_window(self):
         self.adjustSize()
         self.setFixedSize(self.sizeHint())
+        self.position_connection_status_label()
 
     def apply_saved_window_position(self):
         if self.saved_window_position is None:
@@ -1147,6 +1201,7 @@ class TheatreApp(QWidget):
         dispatcher = Dispatcher()
         dispatcher.set_default_handler(self.on_unhandled_osc)
         dispatcher.map("/ch/*/mix/on", self.on_channel_status_osc)
+        dispatcher.map("/info", self.on_info_osc)
 
         try:
             self.osc_listener = ThreadingOSCUDPServer(
@@ -1169,10 +1224,14 @@ class TheatreApp(QWidget):
         self.osc_listener_thread.start()
         logging.info("OSC listener started on %s:%s", DEFAULT_OSC_LISTEN_IP, self.osc_listen_port)
         self.xremote_timer.start()
+        self.connection_probe_timer.start()
         self.send_xremote_keepalive()
+        self.probe_mixer_connection()
 
     def stop_osc_listener(self):
         self.xremote_timer.stop()
+        self.connection_probe_timer.stop()
+        self.set_connection_state(False)
         if self.osc_listener is None:
             return
         self.osc_listener.shutdown()
@@ -1201,6 +1260,35 @@ class TheatreApp(QWidget):
         enabled = value >= 0.5
         logging.debug("OSC parsed channel update: channel=%s enabled=%s raw_value=%s", channel, enabled, value)
         self.channel_status_received.emit(channel, enabled)
+
+    def on_info_osc(self, address, *args):
+        logging.debug("OSC RX info: address=%s args=%s", address, args)
+        model_name = ""
+        if len(args) >= 3:
+            model_name = str(args[2]).strip()
+        self.last_connection_response_monotonic = time.monotonic()
+        self.set_connection_state(True, model_name=model_name)
+
+    def set_connection_state(self, connected, model_name=""):
+        self.connection_state_connected = bool(connected)
+        self.connection_model_name = str(model_name).strip() if connected else ""
+        self.update_connection_status_label()
+
+    def probe_mixer_connection(self):
+        now = time.monotonic()
+        if (
+            self.connection_state_connected
+            and self.last_connection_response_monotonic
+            and ((now - self.last_connection_response_monotonic) * 1000.0) > CONNECTION_RESPONSE_TIMEOUT_MS
+        ):
+            logging.info(
+                "Mixer connection timed out after %.0f ms without /info response",
+                (now - self.last_connection_response_monotonic) * 1000.0,
+            )
+            self.set_connection_state(False)
+
+        if self.send_query_from_listener_socket("/info"):
+            logging.debug("OSC connection probe sent: /info")
 
     def handle_channel_status_update(self, channel, enabled):
         logging.debug("UI handling channel update: channel=%s enabled=%s", channel, enabled)
@@ -1345,6 +1433,10 @@ class TheatreApp(QWidget):
         self.stop_osc_listener()
         self.save_settings()
         super().closeEvent(event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.position_connection_status_label()
 
 
 def main():
