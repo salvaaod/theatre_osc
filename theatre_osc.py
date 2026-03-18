@@ -351,10 +351,11 @@ class TheatreApp(QWidget):
     def build_ui(self):
         self.menu_bar = QMenuBar()
         self.main_layout.setMenuBar(self.menu_bar)
-        self.connection_status_label = QLabel("DISCONNECTED")
+        self.connection_status_label = QLabel("DISCONNECTED", self.menu_bar)
         self.connection_status_label.setAlignment(Qt.AlignCenter)
         self.connection_status_label.setMargin(6)
-        self.menu_bar.setCornerWidget(self.connection_status_label, Qt.TopRightCorner)
+        self.connection_status_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.connection_status_label.raise_()
 
         file_menu = self.menu_bar.addMenu("File")
         self.load_excel_action = QAction("Load Excel", self)
@@ -542,6 +543,19 @@ class TheatreApp(QWidget):
             }}
             """
         )
+        self.connection_status_label.adjustSize()
+        self.position_connection_status_label()
+
+    def position_connection_status_label(self):
+        if not hasattr(self, "connection_status_label") or not hasattr(self, "menu_bar"):
+            return
+
+        self.connection_status_label.adjustSize()
+        badge_size = self.connection_status_label.sizeHint()
+        x = max(0, int((self.menu_bar.width() - badge_size.width()) / 2))
+        y = max(0, int((self.menu_bar.height() - badge_size.height()) / 2))
+        self.connection_status_label.move(x, y)
+        self.connection_status_label.raise_()
 
     def configure_scene_label_width(self):
         placeholder = "SCENE: " + ("W" * 30)
@@ -837,6 +851,7 @@ class TheatreApp(QWidget):
     def adjust_window(self):
         self.adjustSize()
         self.setFixedSize(self.sizeHint())
+        self.position_connection_status_label()
 
     def apply_saved_window_position(self):
         if self.saved_window_position is None:
@@ -1418,6 +1433,10 @@ class TheatreApp(QWidget):
         self.stop_osc_listener()
         self.save_settings()
         super().closeEvent(event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.position_connection_status_label()
 
 
 def main():
