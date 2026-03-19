@@ -1,0 +1,26 @@
+osc meter batches (all levels 16 bit signed short integers, resolution 1/256 dB):
+0 (8) pre l, pre r, gate gr, comp gr, post l, post r, gate key, comp key; (single channel data)
+1 (40) 16x ch pre, aux pre l, aux pre r, fx1 pre l, fx1 pre r, ... fx4 prel, fx4 pre r,
+bus1 pre, ..., bus6 pre, fxsend1 pre, ..., fxsend4 pre, main post l, main post r, mon l, mon r
+2 (36) 16x preamp in, 2x aux in, 18x usb in
+3 (56) 4x (fx in l, fx in r, 10x fx state mtr, fx out l, fx out r)
+4 (100) 100x rta level
+5 (44) 6x aux out, main l out, main r out, 16x ultranet out, 18x usb out, phones l, phones r
+6 (39) 16x ch gate gr, 16x ch comp gr, 6x bus comp gr, main comp gr
+7 (16) 16x ch automix gr
+8 (4) 4x dca (ch post)
+9 (4) recorder in l, recorder in r, recorder out l, recorder out r;
+
+
+Then, in some conversion for RTA on X32 and XR18, the OSC blob returns a set of 16bits ints representing meter values (for RTA). 
+The conversion I have in one of the programs is just dividing the int (cast to a float) by 256., giving the dB value.
+For example, a 32bit value of 0x008000c0 will represent two values, the first one being 0x8000 (or -128.0
+after conversion), and the second one being 0xc000 (or -64.0 after conversion). Similarly, a 32bits value
+of 40e0ffff will represent two successive RTA values of -31.75db and -0.004db, respectively.
+Note: a short int value of 0x0000 (or 0.0db) means signal clipping occurred.
+
+For X32, There's the even more exotic /meters/16 (Automix) that has different formats. 
+The OSC blob starts with Big endian coded length, and all other values are little-endian so conversions can be faster for most (intel-based) systems. 
+All data sent as little endian coded short ints. The first 44 32bits data are split to 2 shorts; 
+Each short int value represents a floating-point level in the range [0, 1.0], by dividing the short int (converted to float) by 32767.0.
+The 4 last 32bits data are 8 automix (channel 01...08) gains coded on successive shorts as Log2(value) * 256.
