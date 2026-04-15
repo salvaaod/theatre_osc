@@ -37,7 +37,7 @@ When running the mixer emulator or another OSC tool on the same computer, the ap
 
 ### Channel utilities
 
-- **Send Channel Names** pushes actor names to mixer channel labels using `/ch/XX/config/name`.
+- **Send Channel Names** pushes actor names to mixer channel labels using `/ch/XX/config/name` and FX return labels using `/fxrtn/XX/config/name`.
 - Channel names are trimmed to the mixer-safe 12-character limit before being sent.
 
 ### Desktop UI and persistence
@@ -66,6 +66,7 @@ Cell values are normalized to ON/OFF booleans using these values:
 - Any other value is treated as `OFF`
 
 Actors are mapped left-to-right to mixer channels starting at channel 1.
+Special headers `FX1`, `FX2`, `FX3`, and `FX4` map to `/fxrtn/01..04/mix/on` instead of `/ch/XX/mix/on`.
 
 ## Installation
 
