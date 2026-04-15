@@ -168,7 +168,8 @@ def load_excel_file(path):
 
 
 def parse_fx_return_actor(actor):
-    match = re.match(r"^FX([1-4])$", str(actor).strip().upper())
+    # Accept FX headers with optional separator (FX1, FX 1, FX-1, FX_1).
+    match = re.match(r"^FX[\s\-_]*([1-4])$", str(actor).strip().upper())
     if not match:
         return None
     return int(match.group(1))
@@ -200,6 +201,10 @@ def target_config_name_address(target):
     if kind == "fxrtn":
         return f"/fxrtn/{index:02d}/config/name"
     return f"/ch/{index:02d}/config/name"
+
+
+def is_fx_return_target(target):
+    return bool(target) and target[0] == "fxrtn"
 
 
 def split_first_space(text):
@@ -1474,6 +1479,9 @@ class TheatreApp(QWidget):
         for actor in self.actors:
             target = self.target_map.get(actor)
             if target is None:
+                continue
+            if is_fx_return_target(target):
+                # Per requirements: FX targets are mute/unmute only, no name writes.
                 continue
 
             channel_name = self.sanitize_channel_name(actor)
