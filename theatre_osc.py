@@ -193,19 +193,16 @@ def build_target_map(actors):
     return target_map
 
 
-def target_mix_on_address(target):
-    return target_mix_on_addresses(target)[0]
-
-
-def target_mix_on_addresses(target):
+def target_mix_on_address(target, osc_port):
     kind, index = target
     if kind == "fxrtn":
-        # X32/M32 uses /fxrtn/XX, while XR18-style mixers use /rtn/X.
-        return [
-            FX_RETURN_ADDRESS_TEMPLATE.format(fx=index),
-            XR18_RETURN_ADDRESS_TEMPLATE.format(fx=index),
-        ]
-    return [DEFAULT_ADDRESS_TEMPLATE.format(ch=index)]
+        # Device family selection is inferred from configured OSC port.
+        # X32/M32 family: 10023 -> /fxrtn/XX/mix/on
+        # XR18 family:    10024 -> /rtn/X/mix/on
+        if int(osc_port) == 10024:
+            return XR18_RETURN_ADDRESS_TEMPLATE.format(fx=index)
+        return FX_RETURN_ADDRESS_TEMPLATE.format(fx=index)
+    return DEFAULT_ADDRESS_TEMPLATE.format(ch=index)
 
 
 def target_config_name_address(target):
@@ -273,22 +270,21 @@ def find_startup_excel(base_dir, remembered_path):
 class X32Sender:
     def __init__(self, ip, port, actor_target_map):
         self.client = SimpleUDPClient(ip, port)
+        self.osc_port = int(port)
         self.actor_target_map = actor_target_map
 
     def send(self, actor, enabled):
         target = self.actor_target_map[actor]
-        addresses = target_mix_on_addresses(target)
+        address = target_mix_on_address(target, self.osc_port)
         value = DEFAULT_OSC_VALUE_FOR_ON if enabled else DEFAULT_OSC_VALUE_FOR_OFF
-        for address in addresses:
-            self.client.send_message(address, value)
-            logging.info("OSC: %s %s", address, value)
+        self.client.send_message(address, value)
+        logging.info("OSC: %s %s", address, value)
 
     def query_channel(self, actor):
         target = self.actor_target_map[actor]
-        addresses = target_mix_on_addresses(target)
-        for address in addresses:
-            self.client.send_message(address, [])
-            logging.info("OSC query: %s", address)
+        address = target_mix_on_address(target, self.osc_port)
+        self.client.send_message(address, [])
+        logging.info("OSC query: %s", address)
 
 
 class Card(QFrame):
@@ -1285,8 +1281,10 @@ class TheatreApp(QWidget):
         dispatcher = Dispatcher()
         dispatcher.set_default_handler(self.on_unhandled_osc)
         dispatcher.map("/ch/*/mix/on", self.on_channel_status_osc)
-        dispatcher.map("/fxrtn/*/mix/on", self.on_fx_return_status_osc)
-        dispatcher.map("/rtn/*/mix/on", self.on_fx_return_status_osc)
+        if self.osc_port == 10024:
+            dispatcher.map("/rtn/*/mix/on", self.on_fx_return_status_osc)
+        else:
+            dispatcher.map("/fxrtn/*/mix/on", self.on_fx_return_status_osc)
         dispatcher.map("/info", self.on_info_osc)
 
         try:
@@ -1356,7 +1354,8 @@ class TheatreApp(QWidget):
 
     def on_fx_return_status_osc(self, address, *args):
         logging.debug("OSC RX matched FX return: address=%s args=%s", address, args)
-        match = re.match(r"^/(?:fxrtn|rtn)/(\d{1,2})/mix/on$", str(address))
+        pattern = r"^/rtn/(\d{1,2})/mix/on$" if self.osc_port == 10024 else r"^/fxrtn/(\d{1,2})/mix/on$"
+        match = re.match(pattern, str(address))
         if not match or not args:
             logging.debug("OSC RX FX return ignored (invalid format or empty args): address=%s args=%s", address, args)
             return
@@ -1519,10 +1518,10 @@ class TheatreApp(QWidget):
             target = self.target_map.get(actor)
             if target is None:
                 continue
-            for address in target_mix_on_addresses(target):
-                if self.send_query_from_listener_socket(address):
-                    sent += 1
-                    logging.debug("OSC query requested for actor=%s target=%s address=%s", actor, target, address)
+            address = target_mix_on_address(target, self.osc_port)
+            if self.send_query_from_listener_socket(address):
+                sent += 1
+                logging.debug("OSC query requested for actor=%s target=%s address=%s", actor, target, address)
 
         self.status_label.setText(
             f"Requested channel states from mixer ({sent}) | listening on UDP {self.osc_listen_port}"
