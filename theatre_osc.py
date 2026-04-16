@@ -207,6 +207,21 @@ def is_fx_return_target(target):
     return bool(target) and target[0] == "fxrtn"
 
 
+def parse_osc_on_off_arg(value):
+    # Mixers/emulators may report ON/OFF as numeric, boolean, or string enums.
+    if isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, (int, float)):
+        return float(value) >= 0.5
+
+    text = str(value).strip().upper()
+    if text in {"ON", "1", "TRUE"}:
+        return True
+    if text in {"OFF", "0", "FALSE"}:
+        return False
+    return None
+
+
 def split_first_space(text):
     text = str(text).strip()
     if " " in text:
@@ -1289,12 +1304,19 @@ class TheatreApp(QWidget):
 
         try:
             channel = int(match.group(1))
-            value = float(args[0])
         except (TypeError, ValueError):
             return
 
-        enabled = value >= 0.5
-        logging.debug("OSC parsed channel update: channel=%s enabled=%s raw_value=%s", channel, enabled, value)
+        enabled = parse_osc_on_off_arg(args[0])
+        if enabled is None:
+            logging.debug("OSC RX channel update ignored (unsupported arg): address=%s args=%s", address, args)
+            return
+        logging.debug(
+            "OSC parsed channel update: channel=%s enabled=%s raw_value=%s",
+            channel,
+            enabled,
+            args[0],
+        )
         self.channel_status_received.emit("ch", channel, enabled)
 
     def on_fx_return_status_osc(self, address, *args):
@@ -1306,16 +1328,22 @@ class TheatreApp(QWidget):
 
         try:
             fx_return = int(match.group(1))
-            value = float(args[0])
         except (TypeError, ValueError):
             return
 
-        enabled = value >= 0.5
+        enabled = parse_osc_on_off_arg(args[0])
+        if enabled is None:
+            logging.debug(
+                "OSC RX FX return update ignored (unsupported arg): address=%s args=%s",
+                address,
+                args,
+            )
+            return
         logging.debug(
             "OSC parsed FX return update: fxrtn=%s enabled=%s raw_value=%s",
             fx_return,
             enabled,
-            value,
+            args[0],
         )
         self.channel_status_received.emit("fxrtn", fx_return, enabled)
 
