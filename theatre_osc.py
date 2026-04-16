@@ -176,15 +176,18 @@ def parse_fx_return_actor(actor):
 
 
 def build_target_map(actors):
-    # Regular actors map sequentially to /ch/01.., while FX1..FX4 map to /fxrtn/01..04.
+    # Keep legacy left-to-right channel indexing behavior for regular actors.
+    # FX1..FX4 map to /fxrtn/01..04 but still consume a position in the legacy
+    # actor order so non-FX actors keep the same channel numbers they had before
+    # this feature was introduced.
     target_map = {}
     channel_index = 1
     for actor in actors:
         fx_index = parse_fx_return_actor(actor)
         if fx_index is not None:
             target_map[actor] = ("fxrtn", fx_index)
-            continue
-        target_map[actor] = ("ch", channel_index)
+        else:
+            target_map[actor] = ("ch", channel_index)
         channel_index += 1
     return target_map
 
