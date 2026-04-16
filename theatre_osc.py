@@ -210,6 +210,11 @@ def is_fx_return_target(target):
     return bool(target) and target[0] == "fxrtn"
 
 
+def is_fx_actor(actor, target_map):
+    target = target_map.get(actor)
+    return is_fx_return_target(target)
+
+
 def parse_osc_on_off_arg(value):
     # Mixers/emulators may report ON/OFF as numeric, boolean, or string enums.
     if isinstance(value, bool):
@@ -1088,9 +1093,14 @@ class TheatreApp(QWidget):
             self.bulk_toggle_target = value
             self.bulk_toggle_snapshot = dict(scene_state)
             for actor in self.actors:
+                if is_fx_actor(actor, self.target_map):
+                    continue
                 scene_state[actor] = value
 
-        self.manual_override_actors.update(self.actors)
+        self.manual_override_actors.update(
+            actor for actor in self.actors
+            if actor in scene_state and not is_fx_actor(actor, self.target_map)
+        )
         self.refresh_cards_from_scene(scene_state)
 
         pending = self.has_pending_changes() or (
@@ -1209,7 +1219,15 @@ class TheatreApp(QWidget):
         )
 
         target_actors = [actor for actor in self.actors if actor in scene_state]
-        if not force_full_send and self.manual_override_actors:
+        if (
+            self.bulk_toggle_snapshot is not None
+            and self.bulk_toggle_scene_name == scene_name
+        ):
+            target_actors = [
+                actor for actor in self.actors
+                if actor in scene_state and not is_fx_actor(actor, self.target_map)
+            ]
+        elif not force_full_send and self.manual_override_actors:
             target_actors = [
                 actor for actor in self.actors if actor in scene_state and actor in self.manual_override_actors
             ]
