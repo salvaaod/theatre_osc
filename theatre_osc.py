@@ -1088,10 +1088,9 @@ class TheatreApp(QWidget):
             self.bulk_toggle_target = value
             self.bulk_toggle_snapshot = dict(scene_state)
             for actor in self.actors:
-                if actor in scene_state:
-                    scene_state[actor] = value
+                scene_state[actor] = value
 
-        self.manual_override_actors.update(actor for actor in self.actors if actor in scene_state)
+        self.manual_override_actors.update(self.actors)
         self.refresh_cards_from_scene(scene_state)
 
         pending = self.has_pending_changes() or (
