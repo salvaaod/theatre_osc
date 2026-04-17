@@ -434,7 +434,7 @@ class TheatreApp(QWidget):
         self.card_size_group = QActionGroup(self)
         self.card_size_group.setExclusive(True)
         self.card_size_actions = {}
-        for s in [60, 80]:
+        for s in [60, 70, 80]:
             action = QAction(f"{s}px", self)
             action.setCheckable(True)
             action.triggered.connect(lambda checked=False, v=s: self.set_card_size(v))

@@ -44,7 +44,7 @@ When running the mixer emulator or another OSC tool on the same computer, the ap
 
 - Uses a Qt / `PySide6` card-based desktop UI.
 - Window auto-sizes to fit the cards and remains fixed-size.
-- Card size can be changed from **Settings → Card Size** (`60px` or `80px`).
+- Card size can be changed from **Settings → Card Size** (`60px`, `70px`, or `80px`).
 - **Always Visible** menu toggles an always-on-top window mode.
 - Saves settings such as Excel path, window position, OSC target, card size, send delay, and always-on-top preference.
 - On startup, only the remembered Excel file is auto-loaded; the app does not scan the working directory for spreadsheets.
@@ -136,6 +136,7 @@ python3 theatre_osc.py --debug
 ### Settings → Card Size
 
 - **60px**
+- **70px**
 - **80px**
 
 ### Settings → OSC
