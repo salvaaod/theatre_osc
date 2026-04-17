@@ -295,7 +295,13 @@ class Card(QFrame):
         self.label.setText(split_first_space(self.raw_text))
 
         font = QFont()
-        font.setPointSize(10 if size <= 60 else 14)
+        if size <= 60:
+            point_size = 10
+        elif size <= 70:
+            point_size = 13
+        else:
+            point_size = 14
+        font.setPointSize(point_size)
         font.setBold(True)
 
         self.label.setFont(font)
