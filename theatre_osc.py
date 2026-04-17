@@ -1512,7 +1512,8 @@ class TheatreApp(QWidget):
 
     def send_query_from_listener_socket(self, address):
         if self.send_from_listener_socket(address):
-            logging.info("OSC query (listener socket): %s", address)
+            if address != "/info":
+                logging.info("OSC query (listener socket): %s", address)
             return True
         return False
 
