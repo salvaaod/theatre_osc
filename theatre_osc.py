@@ -36,6 +36,8 @@ DEFAULT_OSC_PORT = 10023
 DEFAULT_OSC_LISTEN_IP = "0.0.0.0"
 LOCAL_LISTEN_PORT_OFFSET = 10
 DEFAULT_ADDRESS_TEMPLATE = "/ch/{ch:02d}/mix/on"
+FX_RETURN_ADDRESS_TEMPLATE = "/fxrtn/{fx:02d}/mix/on"
+XR18_RETURN_ADDRESS_TEMPLATE = "/rtn/{fx}/mix/on"
 DEFAULT_OSC_VALUE_FOR_ON = 1
 DEFAULT_OSC_VALUE_FOR_OFF = 0
 DEFAULT_OSC_SEND_DELAY_MS = 0
@@ -166,8 +168,72 @@ def load_excel_file(path):
         workbook.close()
 
 
-def build_channel_map(actors):
-    return {actor: i + 1 for i, actor in enumerate(actors)}
+def parse_fx_return_actor(actor):
+    # Accept FX headers with optional separator (FX1, FX 1, FX-1, FX_1).
+    match = re.match(r"^FX[\s\-_]*([1-4])$", str(actor).strip().upper())
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def build_target_map(actors):
+    # Keep legacy left-to-right channel indexing behavior for regular actors.
+    # FX1..FX4 map to /fxrtn/01..04 but still consume a position in the legacy
+    # actor order so non-FX actors keep the same channel numbers they had before
+    # this feature was introduced.
+    target_map = {}
+    channel_index = 1
+    for actor in actors:
+        fx_index = parse_fx_return_actor(actor)
+        if fx_index is not None:
+            target_map[actor] = ("fxrtn", fx_index)
+        else:
+            target_map[actor] = ("ch", channel_index)
+        channel_index += 1
+    return target_map
+
+
+def target_mix_on_address(target, osc_port):
+    kind, index = target
+    if kind == "fxrtn":
+        # Device family selection is inferred from configured OSC port.
+        # X32/M32 family: 10023 -> /fxrtn/XX/mix/on
+        # XR18 family:    10024 -> /rtn/X/mix/on
+        if int(osc_port) == 10024:
+            return XR18_RETURN_ADDRESS_TEMPLATE.format(fx=index)
+        return FX_RETURN_ADDRESS_TEMPLATE.format(fx=index)
+    return DEFAULT_ADDRESS_TEMPLATE.format(ch=index)
+
+
+def target_config_name_address(target):
+    kind, index = target
+    if kind == "fxrtn":
+        return f"/fxrtn/{index:02d}/config/name"
+    return f"/ch/{index:02d}/config/name"
+
+
+def is_fx_return_target(target):
+    return bool(target) and target[0] == "fxrtn"
+
+
+def is_fx_actor(actor, target_map):
+    target = target_map.get(actor)
+    return is_fx_return_target(target)
+
+
+def parse_osc_on_off_arg(value):
+    # Mixers/emulators may report ON/OFF as numeric, boolean, or string enums.
+    if isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, (int, float)):
+        return float(value) >= 0.5
+
+    text = str(value).strip().upper()
+    if text in {"ON", "1", "TRUE"}:
+        return True
+    if text in {"OFF", "0", "FALSE"}:
+        return False
+    return None
 
 
 def split_first_space(text):
@@ -202,21 +268,21 @@ def find_startup_excel(base_dir, remembered_path):
 
 
 class X32Sender:
-    def __init__(self, ip, port, address_template, actor_channel_map):
+    def __init__(self, ip, port, actor_target_map):
         self.client = SimpleUDPClient(ip, port)
-        self.address_template = address_template
-        self.actor_channel_map = actor_channel_map
+        self.osc_port = int(port)
+        self.actor_target_map = actor_target_map
 
     def send(self, actor, enabled):
-        ch = self.actor_channel_map[actor]
-        address = self.address_template.format(ch=ch)
+        target = self.actor_target_map[actor]
+        address = target_mix_on_address(target, self.osc_port)
         value = DEFAULT_OSC_VALUE_FOR_ON if enabled else DEFAULT_OSC_VALUE_FOR_OFF
         self.client.send_message(address, value)
         logging.info("OSC: %s %s", address, value)
 
     def query_channel(self, actor):
-        ch = self.actor_channel_map[actor]
-        address = self.address_template.format(ch=ch)
+        target = self.actor_target_map[actor]
+        address = target_mix_on_address(target, self.osc_port)
         self.client.send_message(address, [])
         logging.info("OSC query: %s", address)
 
@@ -275,7 +341,7 @@ class Card(QFrame):
 
 
 class TheatreApp(QWidget):
-    channel_status_received = Signal(int, bool)
+    channel_status_received = Signal(str, int, bool)
 
     def __init__(self):
         super().__init__()
@@ -291,7 +357,7 @@ class TheatreApp(QWidget):
         self.scene_override = None
         self.scene_override_name = ""
         self.actors = []
-        self.channel_map = {}
+        self.target_map = {}
         self.current_scene_index = 0
         self.last_taken_scene_index = None
         self.last_live_state = None
@@ -655,7 +721,7 @@ class TheatreApp(QWidget):
             self.scene_override = None
             self.scene_override_name = ""
             self.actors = parsed["actors"]
-            self.channel_map = build_channel_map(self.actors)
+            self.target_map = build_target_map(self.actors)
             self.current_scene_index = 0
             self.last_taken_scene_index = None
             self.last_live_state = None
@@ -1033,10 +1099,15 @@ class TheatreApp(QWidget):
             self.bulk_toggle_scene_name = scene_name
             self.bulk_toggle_target = value
             self.bulk_toggle_snapshot = dict(scene_state)
-            for actor in scene_state:
+            for actor in self.actors:
+                if is_fx_actor(actor, self.target_map):
+                    continue
                 scene_state[actor] = value
 
-        self.manual_override_actors.update(scene_state.keys())
+        self.manual_override_actors.update(
+            actor for actor in self.actors
+            if actor in scene_state and not is_fx_actor(actor, self.target_map)
+        )
         self.refresh_cards_from_scene(scene_state)
 
         pending = self.has_pending_changes() or (
@@ -1146,8 +1217,7 @@ class TheatreApp(QWidget):
         sender = X32Sender(
             self.osc_ip,
             self.osc_port,
-            DEFAULT_ADDRESS_TEMPLATE,
-            self.channel_map,
+            self.target_map,
         )
 
         force_full_send = self.force_full_send_next_take or (
@@ -1155,9 +1225,19 @@ class TheatreApp(QWidget):
             and self.bulk_toggle_scene_name == scene_name
         )
 
-        target_actors = list(scene_state.keys())
-        if not force_full_send and self.manual_override_actors:
-            target_actors = [actor for actor in scene_state if actor in self.manual_override_actors]
+        target_actors = [actor for actor in self.actors if actor in scene_state]
+        if (
+            self.bulk_toggle_snapshot is not None
+            and self.bulk_toggle_scene_name == scene_name
+        ):
+            target_actors = [
+                actor for actor in self.actors
+                if actor in scene_state and not is_fx_actor(actor, self.target_map)
+            ]
+        elif not force_full_send and self.manual_override_actors:
+            target_actors = [
+                actor for actor in self.actors if actor in scene_state and actor in self.manual_override_actors
+            ]
 
         changes = 0
         sent_actors = set()
@@ -1201,6 +1281,10 @@ class TheatreApp(QWidget):
         dispatcher = Dispatcher()
         dispatcher.set_default_handler(self.on_unhandled_osc)
         dispatcher.map("/ch/*/mix/on", self.on_channel_status_osc)
+        if self.osc_port == 10024:
+            dispatcher.map("/rtn/*/mix/on", self.on_fx_return_status_osc)
+        else:
+            dispatcher.map("/fxrtn/*/mix/on", self.on_fx_return_status_osc)
         dispatcher.map("/info", self.on_info_osc)
 
         try:
@@ -1253,13 +1337,49 @@ class TheatreApp(QWidget):
 
         try:
             channel = int(match.group(1))
-            value = float(args[0])
         except (TypeError, ValueError):
             return
 
-        enabled = value >= 0.5
-        logging.debug("OSC parsed channel update: channel=%s enabled=%s raw_value=%s", channel, enabled, value)
-        self.channel_status_received.emit(channel, enabled)
+        enabled = parse_osc_on_off_arg(args[0])
+        if enabled is None:
+            logging.debug("OSC RX channel update ignored (unsupported arg): address=%s args=%s", address, args)
+            return
+        logging.debug(
+            "OSC parsed channel update: channel=%s enabled=%s raw_value=%s",
+            channel,
+            enabled,
+            args[0],
+        )
+        self.channel_status_received.emit("ch", channel, enabled)
+
+    def on_fx_return_status_osc(self, address, *args):
+        logging.debug("OSC RX matched FX return: address=%s args=%s", address, args)
+        pattern = r"^/rtn/(\d{1,2})/mix/on$" if self.osc_port == 10024 else r"^/fxrtn/(\d{1,2})/mix/on$"
+        match = re.match(pattern, str(address))
+        if not match or not args:
+            logging.debug("OSC RX FX return ignored (invalid format or empty args): address=%s args=%s", address, args)
+            return
+
+        try:
+            fx_return = int(match.group(1))
+        except (TypeError, ValueError):
+            return
+
+        enabled = parse_osc_on_off_arg(args[0])
+        if enabled is None:
+            logging.debug(
+                "OSC RX FX return update ignored (unsupported arg): address=%s args=%s",
+                address,
+                args,
+            )
+            return
+        logging.debug(
+            "OSC parsed FX return update: fxrtn=%s enabled=%s raw_value=%s",
+            fx_return,
+            enabled,
+            args[0],
+        )
+        self.channel_status_received.emit("fxrtn", fx_return, enabled)
 
     def on_info_osc(self, address, *args):
         logging.debug("OSC RX info: address=%s args=%s", address, args)
@@ -1290,11 +1410,23 @@ class TheatreApp(QWidget):
         if self.send_query_from_listener_socket("/info"):
             logging.debug("OSC connection probe sent: /info")
 
-    def handle_channel_status_update(self, channel, enabled):
-        logging.debug("UI handling channel update: channel=%s enabled=%s", channel, enabled)
-        actor = next((name for name, ch in self.channel_map.items() if ch == channel), None)
+    def handle_channel_status_update(self, target_kind, index, enabled):
+        logging.debug(
+            "UI handling channel update: target_kind=%s index=%s enabled=%s",
+            target_kind,
+            index,
+            enabled,
+        )
+        actor = next(
+            (
+                name
+                for name, target in self.target_map.items()
+                if target[0] == target_kind and target[1] == index
+            ),
+            None,
+        )
         if actor is None:
-            logging.debug("No actor mapped for channel=%s", channel)
+            logging.debug("No actor mapped for target=%s/%s", target_kind, index)
             return
 
         self.current_live_state[actor] = enabled
@@ -1383,13 +1515,13 @@ class TheatreApp(QWidget):
 
         sent = 0
         for actor in self.actors:
-            ch = self.channel_map.get(actor)
-            if ch is None:
+            target = self.target_map.get(actor)
+            if target is None:
                 continue
-            address = DEFAULT_ADDRESS_TEMPLATE.format(ch=ch)
+            address = target_mix_on_address(target, self.osc_port)
             if self.send_query_from_listener_socket(address):
                 sent += 1
-                logging.debug("OSC query requested for actor=%s channel=%s", actor, ch)
+                logging.debug("OSC query requested for actor=%s target=%s address=%s", actor, target, address)
 
         self.status_label.setText(
             f"Requested channel states from mixer ({sent}) | listening on UDP {self.osc_listen_port}"
@@ -1407,18 +1539,21 @@ class TheatreApp(QWidget):
 
         sent = 0
         for actor in self.actors:
-            ch = self.channel_map.get(actor)
-            if ch is None:
+            target = self.target_map.get(actor)
+            if target is None:
+                continue
+            if is_fx_return_target(target):
+                # Per requirements: FX targets are mute/unmute only, no name writes.
                 continue
 
             channel_name = self.sanitize_channel_name(actor)
-            address = f"/ch/{ch:02d}/config/name"
+            address = target_config_name_address(target)
             if self.send_from_listener_socket(address, (channel_name,)):
                 sent += 1
                 logging.debug(
-                    "OSC channel name sent: actor=%s channel=%s name=%s",
+                    "OSC channel name sent: actor=%s target=%s name=%s",
                     actor,
-                    ch,
+                    target,
                     channel_name,
                 )
 

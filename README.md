@@ -22,7 +22,7 @@ When running the mixer emulator or another OSC tool on the same computer, the ap
 - Navigate through scenes with **Previous** and **Next**.
 - Use **Take** to send the current scene to the mixer.
 - Use **Clear** to discard pending scene edits and return to the last live/taken state.
-- Use **ALL ON** or **ALL OFF** to stage a full-scene mute/unmute change before pressing **Take**.
+- Use **ALL ON** or **ALL OFF** to stage an actor-only mute/unmute change before pressing **Take** (FX columns are not changed by these two bulk buttons).
 - After a scene has been taken once, click cards to make per-actor manual adjustments for the current scene preview.
 - Sends only changed channels by default, while forcing a full resend after startup or bulk scene operations.
 
@@ -37,7 +37,7 @@ When running the mixer emulator or another OSC tool on the same computer, the ap
 
 ### Channel utilities
 
-- **Send Channel Names** pushes actor names to mixer channel labels using `/ch/XX/config/name`.
+- **Send Channel Names** pushes actor names to mixer channel labels using `/ch/XX/config/name` (FX headers are mute/unmute only and are not renamed).
 - Channel names are trimmed to the mixer-safe 12-character limit before being sent.
 
 ### Desktop UI and persistence
@@ -66,6 +66,16 @@ Cell values are normalized to ON/OFF booleans using these values:
 - Any other value is treated as `OFF`
 
 Actors are mapped left-to-right to mixer channels starting at channel 1.
+
+FX template behavior:
+
+- Use special headers `FX1`, `FX2`, `FX3`, and `FX4` in row 1 to control mixer FX returns per scene.
+- Recommended header format is exactly `FX1..FX4` (the app also accepts `FX 1`, `FX-1`, `FX_1`).
+- FX headers are mute/unmute only (no channel-name writes).
+- FX OSC path depends on **Settings → OSC → Port**:
+  - Port `10023` (X32/M32 family): `/fxrtn/01..04/mix/on`
+  - Port `10024` (XR18/AR18 family): `/rtn/1..4/mix/on`
+- **ALL ON / ALL OFF** only affect non-FX actor columns.
 
 ## Installation
 
@@ -133,7 +143,7 @@ python3 theatre_osc.py --debug
 - **Set IP**: change the OSC target IP.
 - **Set Port**: change the OSC target port; the local listener port is automatically recalculated as `port + 10`.
 - **Set Send Delay (ms)**: add a delay between outbound OSC messages (`0..50 ms`) to reduce dropped commands on some mixers or networks.
-- **Read Channels**: query channel mute/on states from the mixer.
+- **Read Channels**: query channel mute/on states from the mixer (actors + FX, using the OSC path family selected by port).
 - **Send Channel Names**: write actor names to mixer channel labels.
 
 ## Files created by the app
