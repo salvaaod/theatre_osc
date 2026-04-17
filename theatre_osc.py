@@ -1020,48 +1020,40 @@ class TheatreApp(QWidget):
         if scene_state is None or actor not in scene_state:
             return
 
-        if not self.card_edit_unlocked:
-            if actor in self.current_live_state and (
-                actor in self.mismatch_actors or actor in self.manual_override_actors
-            ):
-                if actor in self.manual_override_actors:
-                    self.manual_override_actors.discard(actor)
-                else:
-                    self.manual_override_actors.add(actor)
-                self.refresh_cards_from_scene(scene_state)
-                had_bulk_toggle = self.bulk_toggle_snapshot is not None
-                self.clear_bulk_toggle_state()
-                self.set_take_pending(bool(self.manual_override_actors) or had_bulk_toggle)
-            return
+        enabled = not bool(scene_state[actor])
+        scene_state[actor] = enabled
+        self.send_actor_immediately(actor, enabled)
 
-        scene_name = self.scene_names[self.current_scene_index]
-        if self.manual_edit_scene_name != scene_name or self.manual_edit_snapshot is None:
-            self.manual_edit_scene_name = scene_name
-            self.manual_edit_snapshot = dict(scene_state)
-
-        scene_state[actor] = not bool(scene_state[actor])
-        expected_original = bool(self.manual_edit_snapshot.get(actor, False))
-        actor_is_reverted = bool(scene_state[actor]) == expected_original
-
-        if actor_is_reverted:
-            scene_state.clear()
-            scene_state.update(self.manual_edit_snapshot)
-            self.clear_manual_edit_state()
-            self.manual_override_actors.clear()
-            self.clear_bulk_toggle_state()
-            self.refresh_cards_from_scene(scene_state)
-            self.set_take_pending(False)
-            return
-
-        self.manual_override_actors = {
-            name for name, enabled in scene_state.items()
-            if bool(enabled) != bool(self.manual_edit_snapshot.get(name, False))
-        }
+        self.card_edit_unlocked = True
+        self.manual_override_actors.discard(actor)
+        self.clear_manual_edit_state()
         self.refresh_cards_from_scene(scene_state)
+        self.set_take_pending(self.has_pending_changes())
 
-        had_bulk_toggle = self.bulk_toggle_snapshot is not None
-        self.clear_bulk_toggle_state()
-        self.set_take_pending(self.has_pending_changes() or had_bulk_toggle)
+    def send_actor_immediately(self, actor, enabled):
+        sender = X32Sender(
+            self.osc_ip,
+            self.osc_port,
+            self.target_map,
+        )
+        sender.send(actor, enabled)
+
+        if self.last_live_state is None:
+            self.last_live_state = {}
+        value = bool(enabled)
+        self.current_live_state[actor] = value
+        self.last_live_state[actor] = value
+        self.mismatch_actors.discard(actor)
+        self.status_label.setText(
+            f"Direct send: {actor} {'ON' if value else 'OFF'} | OSC {self.osc_ip}:{self.osc_port}"
+        )
+        logging.info(
+            "DIRECT actor send: actor=%s enabled=%s | OSC %s:%s",
+            actor,
+            value,
+            self.osc_ip,
+            self.osc_port,
+        )
 
     def set_all_for_current_scene(self, enabled):
         if not self.card_edit_unlocked:
