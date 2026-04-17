@@ -267,26 +267,6 @@ def find_startup_excel(base_dir, remembered_path):
     return None
 
 
-class X32Sender:
-    def __init__(self, ip, port, actor_target_map):
-        self.client = SimpleUDPClient(ip, port)
-        self.osc_port = int(port)
-        self.actor_target_map = actor_target_map
-
-    def send(self, actor, enabled):
-        target = self.actor_target_map[actor]
-        address = target_mix_on_address(target, self.osc_port)
-        value = DEFAULT_OSC_VALUE_FOR_ON if enabled else DEFAULT_OSC_VALUE_FOR_OFF
-        self.client.send_message(address, value)
-        logging.info("OSC: %s %s", address, value)
-
-    def query_channel(self, actor):
-        target = self.actor_target_map[actor]
-        address = target_mix_on_address(target, self.osc_port)
-        self.client.send_message(address, [])
-        logging.info("OSC query: %s", address)
-
-
 class Card(QFrame):
     clicked = Signal(str)
 
@@ -1031,18 +1011,14 @@ class TheatreApp(QWidget):
         self.set_take_pending(self.has_pending_changes())
 
     def send_actor_immediately(self, actor, enabled):
-        sender = X32Sender(
-            self.osc_ip,
-            self.osc_port,
-            self.target_map,
-        )
-        sender.send(actor, enabled)
+        if not self.send_actor_osc(actor, enabled):
+            self.status_label.setText(
+                f"Direct send failed: {actor} | OSC {self.osc_ip}:{self.osc_port}"
+            )
+            return
 
-        if self.last_live_state is None:
-            self.last_live_state = {}
         value = bool(enabled)
-        self.current_live_state[actor] = value
-        self.last_live_state[actor] = value
+        self.update_known_actor_live_state(actor, value)
         self.mismatch_actors.discard(actor)
         self.status_label.setText(
             f"Direct send: {actor} {'ON' if value else 'OFF'} | OSC {self.osc_ip}:{self.osc_port}"
@@ -1206,12 +1182,6 @@ class TheatreApp(QWidget):
         if scene_state is None:
             return
 
-        sender = X32Sender(
-            self.osc_ip,
-            self.osc_port,
-            self.target_map,
-        )
-
         force_full_send = self.force_full_send_next_take or (
             self.bulk_toggle_snapshot is not None
             and self.bulk_toggle_scene_name == scene_name
@@ -1237,20 +1207,17 @@ class TheatreApp(QWidget):
         for actor in target_actors:
             enabled = bool(scene_state[actor])
             if force_full_send or reference.get(actor) != bool(enabled):
-                sender.send(actor, enabled)
-                changes += 1
-                sent_actors.add(actor)
-                if self.osc_send_delay_ms > 0:
-                    time.sleep(self.osc_send_delay_ms / 1000.0)
+                if self.send_actor_osc(actor, enabled):
+                    changes += 1
+                    sent_actors.add(actor)
+                    if self.osc_send_delay_ms > 0:
+                        time.sleep(self.osc_send_delay_ms / 1000.0)
 
         self.force_full_send_next_take = False
         self.last_taken_scene_index = self.current_scene_index
-        if self.last_live_state is None:
-            self.last_live_state = {}
         for actor in sent_actors:
             value = bool(scene_state[actor])
-            self.current_live_state[actor] = value
-            self.last_live_state[actor] = value
+            self.update_known_actor_live_state(actor, value)
             self.mismatch_actors.discard(actor)
         self.manual_override_actors.clear()
         self.clear_manual_edit_state()
@@ -1485,6 +1452,35 @@ class TheatreApp(QWidget):
         except OSError as exc:
             logging.warning("OSC send failed for %s (%s)", address, exc)
             return False
+
+    def send_actor_osc(self, actor, enabled):
+        target = self.target_map.get(actor)
+        if target is None:
+            logging.warning("Cannot send actor with no OSC target mapping: %s", actor)
+            return False
+
+        address = target_mix_on_address(target, self.osc_port)
+        value = DEFAULT_OSC_VALUE_FOR_ON if enabled else DEFAULT_OSC_VALUE_FOR_OFF
+
+        if self.send_from_listener_socket(address, (value,)):
+            logging.info("OSC actor send via listener socket: %s %s", address, value)
+            return True
+
+        # Fallback path: keep legacy behavior if listener send is unavailable.
+        try:
+            SimpleUDPClient(self.osc_ip, self.osc_port).send_message(address, value)
+            logging.info("OSC actor send via direct UDP client fallback: %s %s", address, value)
+            return True
+        except OSError as exc:
+            logging.warning("OSC actor send failed for %s (%s)", address, exc)
+            return False
+
+    def update_known_actor_live_state(self, actor, enabled):
+        value = bool(enabled)
+        self.current_live_state[actor] = value
+        if self.last_live_state is None:
+            self.last_live_state = {}
+        self.last_live_state[actor] = value
 
     def send_xremote_keepalive(self):
         if self.send_from_listener_socket("/xremote"):
