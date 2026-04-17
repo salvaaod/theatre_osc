@@ -496,7 +496,7 @@ class TheatreApp(QWidget):
 
         self.scene_label = QLabel("No Scene")
         self.scene_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.scene_label.setStyleSheet("font-size: 20px; font-weight: bold;")
+        self.scene_label.setStyleSheet("font-weight: bold;")
         self.configure_scene_label_width()
         self.controls_layout.addWidget(self.scene_label)
 
@@ -608,6 +608,24 @@ class TheatreApp(QWidget):
         metrics = QFontMetrics(self.scene_label.font())
         width = metrics.horizontalAdvance(placeholder) + 20
         self.scene_label.setFixedWidth(width)
+
+    def set_scene_label_text(self, text):
+        available_width = max(10, self.scene_label.width() - 10)
+        font = self.scene_label.font()
+        font.setBold(True)
+
+        chosen_size = 9
+        for point_size in range(20, 8, -1):
+            font.setPointSize(point_size)
+            metrics = QFontMetrics(font)
+            if metrics.horizontalAdvance(text) <= available_width:
+                chosen_size = point_size
+                break
+
+        font.setPointSize(chosen_size)
+        self.scene_label.setFont(font)
+        self.scene_label.setText(text)
+        self.scene_label.setToolTip(text)
 
     def configure_scene_label_position_offset(self):
         metrics = QFontMetrics(self.scene_label.font())
@@ -793,16 +811,16 @@ class TheatreApp(QWidget):
 
     def draw_current_scene(self):
         if not self.scene_names:
-            self.scene_label.setText("No Scene")
+            self.set_scene_label_text("No Scene")
             self.adjust_window()
             return
 
         scene_name = self.scene_names[self.current_scene_index]
         scene_state = self.get_scene_state(scene_name)
         if scene_state is None:
-            self.scene_label.setText("No Scene")
+            self.set_scene_label_text("No Scene")
             return
-        self.scene_label.setText(f"SCENE: {scene_name}")
+        self.set_scene_label_text(f"SCENE: {scene_name}")
 
         self.refresh_cards_from_scene(scene_state)
 
