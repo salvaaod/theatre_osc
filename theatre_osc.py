@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QMenuBar,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -603,11 +604,15 @@ class TheatreApp(QWidget):
         self.connection_status_label.move(x, y)
         self.connection_status_label.raise_()
 
-    def configure_scene_label_width(self):
+    def configure_scene_label_width(self, scene_names=None):
         placeholder = "SCENE: " + ("W" * 30)
         metrics = QFontMetrics(self.scene_label.font())
         width = metrics.horizontalAdvance(placeholder) + 20
+        if scene_names:
+            longest_scene_name = max(scene_names, key=lambda name: metrics.horizontalAdvance(name))
+            width = max(width, metrics.horizontalAdvance(f"SCENE: {longest_scene_name}") + 20)
         self.scene_label.setFixedWidth(width)
+        self.scene_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
     def configure_scene_label_position_offset(self):
         metrics = QFontMetrics(self.scene_label.font())
@@ -711,6 +716,7 @@ class TheatreApp(QWidget):
             self.manual_override_actors.clear()
             self.last_excel_path = os.path.abspath(path)
 
+            self.configure_scene_label_width(self.scene_names)
             self.rebuild_cards()
             self.draw_current_scene()
             self.set_take_pending(True)
