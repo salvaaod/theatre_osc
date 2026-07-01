@@ -154,7 +154,7 @@ python3 theatre_osc.py --debug
 
 ## Notes and behavior details
 
-- Card background colors reflect state: neutral cards are active/on, red cards are muted/off.
+- Card background colors reflect state: neutral cards are active/on, orange cards are muted/off.
 - The **Take** button blinks when there are staged changes waiting to be sent.
 - Bulk operations lock navigation until you either press **Take** or cancel the same bulk operation.
 - If the remembered startup Excel file is missing or invalid, the app starts without loading a workbook and shows `No startup Excel found` or a startup failure message.
