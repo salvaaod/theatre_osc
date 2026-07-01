@@ -580,7 +580,7 @@ class TheatreApp(QWidget):
         if connected and self.connection_model_name:
             text = f"{text} ({self.connection_model_name})"
 
-        bg = "#0f7a2a" if connected else "#b00020"
+        bg = "#0f7a2a" if connected else CARD_OFF_COLOR
         fg = "#ffffff"
         self.connection_status_label.setText(text)
         self.connection_status_label.setStyleSheet(
